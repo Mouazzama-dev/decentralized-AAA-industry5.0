@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Database / Storage
+*.sqlite
+*.sqlite-journal
+
+# Environment / Secrets
+.env
+.env.*
+secret.key
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+
+# Veramo runtime data
+data/
+
