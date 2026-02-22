@@ -1,7 +1,7 @@
 import { agent } from '../agent.js'
 
 async function main() {
-  const identifier = await agent.didManagerCreate({ alias: 'default' })
+  const identifier = await agent.didManagerCreate({ alias: 'test' })
 
   console.log('\n✅ New Identifier Created:')
   console.log(JSON.stringify(identifier, null, 2))

@@ -16,7 +16,11 @@ async function main() {
   console.log('Credential being verified:\n')
   console.log(JSON.stringify(credential, null, 2))
 
-
+  //The DID is bound to an Ethereum account via EIP-155. The `did:ethr` method is used to create a DID that r
+  // epresents an Ethereum address. The `sepolia` network is specified, which is a test network for Ethereum. 
+  // The hexadecimal string following the network identifier is the Ethereum address associated with the DID. 
+  // This address is used for interactions on the Ethereum blockchain, such as signing transactions or 
+  // verifying credentials.
   const result = await agent.verifyCredential({
     credential: {
   "credentialSubject": {

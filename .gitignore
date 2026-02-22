@@ -1,24 +1,50 @@
-# Dependencies
+########################################
+# Node.js
+########################################
 node_modules/
+package-lock.json
 
-# Database / Storage
-*.sqlite
-*.sqlite-journal
-
+########################################
 # Environment / Secrets
+########################################
 .env
 .env.*
 secret.key
+*.key
+*.pem
 
+########################################
+# Database / Local Storage
+########################################
+*.sqlite
+*.sqlite-journal
+data/
+
+########################################
 # Logs
+########################################
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+logs/
 
+########################################
 # OS / Editor junk
+########################################
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
 
-# Veramo runtime data
-data/
+########################################
+# Foundry / Solidity
+########################################
+out/
+cache/
+broadcast/
+artifacts/
 
+########################################
+# Misc
+########################################
+*.log
