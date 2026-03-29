@@ -3,71 +3,77 @@ import { ethers } from "ethers"
 
 // --- CONFIGURATION ---
 const RPC = "https://ethereum-sepolia-rpc.publicnode.com"
-const PRIVATE_KEY = "0xf58599b4f5d5b15d7158226f7dc3e611ffdd8ff608def33bab39f1add282eff1" // ⚠️ 
+const PRIVATE_KEY = "0xYOUR_PRIVATE_KEY_HERE" // Replace with your Sepolia wallet private key
 const CONTRACT_ADDRESS = "0xCB14E1EE8D2542193AEdF26e489415433a2C151D"
-
 const ABI = ["function logAccess(string,string,uint256,bool)"]
 
 async function main() {
   console.log('🛡️  GATEWAY: Initializing Verification & Blockchain Sync...\n')
 
-  // 1. Robot ki apni identity fetch karein (Simulating the machine's ID)
+  // 1. Fetch Identities from DB
   const robot = await agent.didManagerGetByAlias({ alias: 'welding-robot-09' })
+  const admin = await agent.didManagerGetByAlias({ alias: 'factory-admin' })
   const myRobotId = robot.did
   
-  // 2. Database se latest Industrial Permit (VC) uthayein
+  // 2. Fetch Credentials from DB
   const credentials = await agent.dataStoreORMGetVerifiableCredentials()
   if (credentials.length === 0) {
-    console.log("❌ No permits found in database. Run issue-permit.js first.")
+    console.log("❌ No permits found. Run issue-permit.js first.")
     return
   }
 
-  // Last issued credential pick kar rahe hain
-  const vc = credentials[credentials.length - 1].verifiableCredential 
-  const cs = vc.credentialSubject
+  // Pick the latest credential
+  const latestCredential = credentials[credentials.length - 1].verifiableCredential 
+  const cs = latestCredential.credentialSubject
 
-  // 3. POLICY CHECK (Logic Gate)
-  const isCorrectMachine = cs.authorizedDeviceId === myRobotId
-  const isQualified = Number(cs.skillLevel) >= 4
-  const role = cs.role || "Unknown"
-
-  const accessGranted = isCorrectMachine && isQualified
-
-  console.log('-------------------------------------------')
-  console.log(`👤 Operator DID: ${cs.id}`)
-  console.log(`🤖 Device Target: ${cs.authorizedDeviceId}`)
-  console.log(`📊 Level Check:  ${cs.skillLevel} (Required: 4+)`)
-  console.log(`🎯 Match Result: ${isCorrectMachine ? "✅ MATCH" : "❌ WRONG MACHINE"}`)
-  console.log('-------------------------------------------')
-
-  // 4. BLOCKCHAIN LOGGING (The Audit Trail)
-  console.log('⛓️  Logging result to Sepolia Blockchain...')
+  // 3. TRUST & POLICY CHECK
+  // Rule A: Was it issued by our Admin?
+  const isTrustedIssuer = latestCredential.issuer.id === admin.did
   
+  // Rule B: Is it for THIS machine?
+  const isCorrectMachine = cs.authorizedDeviceId === myRobotId
+  
+  // Rule C: Is the skill level sufficient?
+  const isQualified = Number(cs.skillLevel) >= 4
+
+  const accessGranted = isTrustedIssuer && isCorrectMachine && isQualified
+
+  console.log('-------------------------------------------')
+  console.log(`📜 Issuer:       ${latestCredential.issuer.id === admin.did ? "✅ FACTORY ADMIN" : "❌ UNKNOWN"}`)
+  console.log(`👤 Operator:     ${cs.id}`)
+  console.log(`🤖 Device Match: ${isCorrectMachine ? "✅ MATCH" : "❌ WRONG DEVICE"}`)
+  console.log(`📊 Skill Level:  ${cs.skillLevel} (Req: 4+)`)
+  console.log('-------------------------------------------')
+
+  if (!isTrustedIssuer) {
+    console.log("🚨 SECURITY ALERT: Unauthorized Issuer detected!")
+  }
+
+  // 4. BLOCKCHAIN LOGGING
+  console.log('⛓️  Logging result to Sepolia Blockchain...')
   try {
     const provider = new ethers.JsonRpcProvider(RPC)
     const wallet = new ethers.Wallet(PRIVATE_KEY, provider)
     const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet)
 
     const tx = await contract.logAccess(
-      cs.id,              // operatorDid
-      role,               // skill/role
+      cs.id, 
+      cs.role || "Operator", 
       Number(cs.skillLevel), 
-      accessGranted       // bool (granted)
+      accessGranted
     )
-
-    console.log(`⏳ Transaction Sent! Hash: ${tx.hash}`)
+    console.log(`⏳ Tx Hash: ${tx.hash}`)
     await tx.wait()
     console.log("✅ ACCESS EVENT LOGGED ON-CHAIN")
-
   } catch (error) {
     console.error("❌ Blockchain logging failed:", error.message)
   }
 
   // 5. FINAL DECISION
   if (accessGranted) {
-    console.log("\n🔓 SUCCESS: Machine Unlocked for Operator.")
+    console.log("\n🔓 SUCCESS: Machine Unlocked.")
   } else {
-    console.log("\n🔒 DENIED: Safety Protocol Active. Machine Locked.")
+    console.log("\n🔒 DENIED: Unauthorized or Unqualified.")
   }
 }
 
