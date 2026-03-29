@@ -17,6 +17,13 @@ async function main() {
   })
   console.log(`🤖 DEVICE ADDED:   ${device.did}`)
 
+  // 3. Create a Factory Admin (for future use)
+  const admin = await agent.didManagerCreate({ 
+    alias: 'factory-admin',
+    provider: 'did:ethr:sepolia'    
+})
+console.log(`🔑 ADMIN DID: ${admin.did}`)
+
   console.log('\n✅ Identities registered in database.sqlite')
 }
 
