@@ -4,6 +4,7 @@ async function main() {
   // Database se identities uthayein
   const operator = await agent.didManagerGetByAlias({ alias: 'operator-marco' })
   const device = await agent.didManagerGetByAlias({ alias: 'welding-robot-09' })
+  const admin = await agent.didManagerGetByAlias({ alias: 'factory-admin' })
 
   console.log(`Issuing permit for ${operator.did} to use ${device.did}...`)
 
@@ -11,8 +12,7 @@ async function main() {
     credential: {
       "@context": ["https://www.w3.org/ns/credentials/v2"],
       type: ["VerifiableCredential", "MachineAccessPermit"],
-      issuer: { id: operator.did }, // For now, self-signed (can be changed to Admin later)
-      
+      issuer: { id: admin.did },      
       credentialSubject: {
         id: operator.did,
         role: "SeniorWelder",
