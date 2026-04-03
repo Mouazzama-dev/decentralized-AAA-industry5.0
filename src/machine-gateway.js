@@ -1,11 +1,15 @@
 import { agent } from '../agent.js'
 import { ethers } from "ethers"
+import * as dotenv from 'dotenv';
+dotenv.config();
 
+// Now you can access
 // --- CONFIGURATION ---
-const RPC = "https://ethereum-sepolia-rpc.publicnode.com"
-const PRIVATE_KEY = "0xYOUR_PRIVATE_KEY_HERE" // Replace with your Sepolia wallet private key
-const CONTRACT_ADDRESS = "0xCB14E1EE8D2542193AEdF26e489415433a2C151D"
-const ABI = ["function logAccess(string,string,uint256,bool)"]
+const RPC = process.env.SEPOLIA_RPC_URL // Replace with your Sepolia RPC URL
+const PRIVATE_KEY = process.env.PRIVATE_KEY // Replace with your Sepolia wallet private key
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS
+const ABI = process.env.CONTRACT_ABI  // Replace with your contract's ABI
+
 
 async function main() {
   console.log('🛡️  GATEWAY: Initializing Verification & Blockchain Sync...\n')
