@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* Hum yahan apne project ke common colors define karenge */
+@theme {
+  --color-accent: #00FF88; /* Industrial Green */
+  --color-background: #0A0A0B;
+}
