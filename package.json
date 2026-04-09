@@ -21,9 +21,11 @@
     "@veramo/did-resolver": "^6.0.0",
     "@veramo/key-manager": "^6.0.0",
     "@veramo/kms-local": "^6.0.0",
+    "cors": "^2.8.6",
     "did-resolver": "^4.1.0",
     "ethers": "^6.16.0",
     "ethr-did-resolver": "^10.1.10",
+    "express": "^5.2.1",
     "reflect-metadata": "^0.2.2",
     "typeorm": "^0.3.17"
   }
