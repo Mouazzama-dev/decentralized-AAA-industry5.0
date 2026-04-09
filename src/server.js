@@ -36,5 +36,52 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
+// 3. Issue Verifiable Credential (Permit)
+app.post('/api/issue-permit', async (req, res) => {
+    try {
+        const { operatorDid, deviceDid } = req.body;
+
+        const credential = await agent.createVerifiableCredential({
+            credential: {
+                issuer: { id: 'did:ethr:sepolia:0xYOUR_ADMIN_DID_HERE' }, // Yahan Admin ka DID dalien ya agent se fetch karein
+                credentialSubject: {
+                    id: operatorDid,
+                    permit: {
+                        resource: deviceDid,
+                        access: "EXECUTE",
+                        validUntil: "2026-12-31"
+                    }
+                }
+            },
+            proofFormat: 'jwt'
+        });
+
+        res.json(credential);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. Verify a Permit (The Machine's Gatekeeper)
+app.post('/api/verify-permit', async (req, res) => {
+    try {
+        const { vc } = req.body; // The JWT string from the frontend
+        
+        const result = await agent.verifyCredential({
+            credential: vc
+        });
+
+        if (result.verified) {
+            res.json({ success: true, message: "Credential Verified!" });
+        } else {
+            res.status(401).json({ success: false, message: "Invalid Signature!" });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+
 const PORT = 5000;
 app.listen(PORT, () => console.log(`🚀 Backend Bridge running on http://localhost:${PORT}`));

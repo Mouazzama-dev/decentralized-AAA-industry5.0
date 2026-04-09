@@ -1,0 +1,28 @@
+@reference "./global.css";
+
+.issuance-container {
+    @apply min-h-screen bg-[#0A0A0B] p-8 text-white;
+}
+
+.permit-form {
+    @apply bg-[#111113] border border-gray-800 rounded-2xl p-8;
+}
+
+.select-box {
+    @apply w-full bg-black border border-gray-700 rounded-lg p-3 outline-none 
+           focus:border-accent text-gray-300 mb-6 appearance-none cursor-pointer;
+}
+
+.action-chip {
+    @apply px-4 py-2 rounded-full border border-gray-700 text-xs font-bold 
+           cursor-pointer transition-all hover:border-accent;
+}
+
+.action-chip-active {
+    @apply bg-accent text-black border-accent;
+}
+
+.vc-preview {
+    @apply mt-6 p-4 bg-black rounded-lg border border-dashed border-gray-700 
+           font-mono text-[10px] text-accent overflow-x-auto;
+}
