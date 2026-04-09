@@ -14,7 +14,7 @@ const Navbar = ({ activePage, setActivePage }) => {
         <div className="bg-accent p-1.5 rounded-lg">
           <LayoutDashboard className="text-black" size={20} />
         </div>
-        <span className="font-bold text-xl tracking-tighter text-white">SSI FACTORY</span>
+        <span className="font-bold text-xl tracking-tighter text-white">Smart Factory</span>
       </div>
 
       <div className="flex gap-6">
