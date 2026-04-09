@@ -1,30 +1,25 @@
 import { agent } from '../agent.js'
 
+async function getOrCreateDID(alias) {
+  try {
+    const existing = await agent.didManagerGetByAlias({ alias })
+    console.log(`✅ Existing: ${alias} -> ${existing.did}`)
+    return existing
+  } catch (e) {
+    const created = await agent.didManagerCreate({ alias, provider: 'did:ethr:sepolia' })
+    console.log(`🆕 Created: ${alias} -> ${created.did}`)
+    return created
+  }
+}
+
 async function main() {
-  console.log('Setting up Industrial Ecosystem...\n')
-
-  // 1. Create a Human Operator
-  const operator = await agent.didManagerCreate({ 
-    alias: 'operator-marco',
-    provider: 'did:ethr:sepolia' 
-  })
-  console.log(`👤 OPERATOR ADDED: ${operator.did}`)
-
-  // 2. Create a Machine (IoT Device)
-  const device = await agent.didManagerCreate({ 
-    alias: 'welding-robot-09',
-    provider: 'did:ethr:sepolia' 
-  })
-  console.log(`🤖 DEVICE ADDED:   ${device.did}`)
-
-  // 3. Create a Factory Admin (for future use)
-  const admin = await agent.didManagerCreate({ 
-    alias: 'factory-admin',
-    provider: 'did:ethr:sepolia'    
-})
-console.log(`🔑 ADMIN DID: ${admin.did}`)
-
-  console.log('\n✅ Identities registered in database.sqlite')
+  console.log('🏗️  Setting up Multi-Asset Factory...')
+  await getOrCreateDID('operator-marco')
+  await getOrCreateDID('operator-elena')
+  await getOrCreateDID('welding-robot-09')
+  await getOrCreateDID('cnc-lathe-01')
+  await getOrCreateDID('factory-admin')
+  console.log('✨ All identities ready.')
 }
 
 main().catch(console.log)
