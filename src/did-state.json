@@ -1,0 +1,13 @@
+{
+  "activeDids": [
+    "factory-admin",
+    "did:ethr:sepolia:0x035236bebab4ef90075c3ff818d29b0bdeef6734571a27ed958bc1d7efacc08518",
+    "did:ethr:sepolia:0x02f3afde6ad203f13368cddba825bbaeccab6ea7a1287cc2677a0191ba38b6d424",
+    "did:ethr:sepolia:0x028fcd2985f5cdb8487243c375ecf12a38ed7ae8bc82a8802255f7d5c9292131fa",
+    "did:ethr:sepolia:0x039fa478bb53afab064298869ccbfd77cdaafc10b099e05a8f866ee27871b24b64",
+    "did:ethr:sepolia:0x03fdec5cc6aad104c5289a90934d8c6a827925595ea630964ef11d978ab483ebbe",
+    "did:ethr:sepolia:0x03de4699c739c74ce126cc309ce0852efa99640d7f27fc20a4a6b275ffd6d56c16",
+    "did:ethr:sepolia:0x02f0772f999cc2df0544755a08a6a3edbcca7fb5df14587d06ad26f12e79af274f"
+  ],
+  "inactiveDids": []
+}

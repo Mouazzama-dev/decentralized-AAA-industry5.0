@@ -1,18 +1,49 @@
 import express from 'express';
 import cors from 'cors';
 import { agent } from '../agent.js';
+import fs from 'fs';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ✅ STATE MANAGEMENT
-let activeDids = ['factory-admin'];
-let inactiveDids = []; // 🔥 NEW
-
 const ADMIN_WALLET_ADDRESS = "0x5d1a7e1b7dc23d2e1f677e1ed919fb501d36205e";
 
-// ✅ ADMIN CHECK
+// 📁 FILE PATH
+const STATE_FILE = './did-state.json';
+
+// 🔄 LOAD STATE
+const loadState = () => {
+    try {
+        if (fs.existsSync(STATE_FILE)) {
+            return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+        }
+    } catch (err) {
+        console.error("❌ Error loading state:", err);
+    }
+    return { activeDids: ['factory-admin'], inactiveDids: [] };
+};
+
+// 💾 SAVE STATE
+const saveState = () => {
+    try {
+        fs.writeFileSync(
+            STATE_FILE,
+            JSON.stringify({ activeDids, inactiveDids }, null, 2)
+        );
+    } catch (err) {
+        console.error("❌ Error saving state:", err);
+    }
+};
+
+// ✅ INITIALIZE (ONLY ONCE)
+let { activeDids, inactiveDids } = loadState();
+
+console.log("📦 Loaded State:", activeDids);
+
+// =======================
+// 🔐 ADMIN CHECK
+// =======================
 app.post('/api/is-admin', (req, res) => {
     const { address } = req.body;
     res.json({
@@ -20,7 +51,9 @@ app.post('/api/is-admin', (req, res) => {
     });
 });
 
-// ✅ GET IDENTITIES (3 STATES)
+// =======================
+// 📜 GET IDENTITIES
+// =======================
 app.get('/api/identities', async (req, res) => {
     try {
         const identifiers = await agent.didManagerFind();
@@ -28,9 +61,10 @@ app.get('/api/identities', async (req, res) => {
         const formatted = identifiers.map(i => ({
             alias: i.alias,
             did: i.did,
-            type: i.alias.includes('robot') || i.alias.includes('lathe') ? 'device' : 'operator',
+            type: i.alias.includes('robot') || i.alias.includes('lathe')
+                ? 'device'
+                : 'operator',
 
-            // 🔥 3 STATE LOGIC
             status: inactiveDids.includes(i.did)
                 ? 'INACTIVE'
                 : activeDids.includes(i.did) || i.alias === 'factory-admin'
@@ -44,7 +78,9 @@ app.get('/api/identities', async (req, res) => {
     }
 });
 
+// =======================
 // ✅ ACTIVATE
+// =======================
 app.post('/api/activate-did', async (req, res) => {
     try {
         const { did, address } = req.body;
@@ -53,24 +89,25 @@ app.post('/api/activate-did', async (req, res) => {
             return res.status(403).json({ error: "Only admin can activate!" });
         }
 
-        // remove from inactive
         inactiveDids = inactiveDids.filter(d => d !== did);
 
-        // add to active
         if (!activeDids.includes(did)) {
             activeDids.push(did);
         }
 
-        console.log(`✅ Activated: ${did}`);
+        saveState(); // 🔥 IMPORTANT
 
+        console.log(`✅ Activated: ${did}`);
         res.json({ success: true });
 
-    } catch {
+    } catch (e) {
         res.status(500).json({ error: "Activation Error" });
     }
 });
 
-// ✅ DEACTIVATE
+// =======================
+// ❌ DEACTIVATE
+// =======================
 app.post('/api/deactivate-did', async (req, res) => {
     try {
         const { did, address } = req.body;
@@ -79,48 +116,54 @@ app.post('/api/deactivate-did', async (req, res) => {
             return res.status(403).json({ error: "Only admin can deactivate!" });
         }
 
-        // remove from active
         activeDids = activeDids.filter(d => d !== did);
 
-        // add to inactive
         if (!inactiveDids.includes(did)) {
             inactiveDids.push(did);
         }
 
-        console.log(`❌ Deactivated: ${did}`);
+        saveState(); // 🔥 IMPORTANT
 
+        console.log(`❌ Deactivated: ${did}`);
         res.json({ success: true });
 
-    } catch {
+    } catch (e) {
         res.status(500).json({ error: "Deactivation Error" });
     }
 });
 
-// ✅ REGISTER
+// =======================
+// 🆕 REGISTER
+// =======================
 app.post('/api/register', async (req, res) => {
     try {
-        const { alias, type } = req.body;
+        const { alias } = req.body;
 
         const identity = await agent.didManagerCreate({
             alias,
             provider: 'did:ethr:sepolia'
         });
 
-        res.json({ alias, type, did: identity.did });
+        res.json({ alias, did: identity.did });
 
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
 
-// ✅ ISSUE VC
+// =======================
+// 🔐 ISSUE VC
+// =======================
 app.post('/api/issue-permit', async (req, res) => {
     try {
         const { operatorDid, deviceDid } = req.body;
 
+        const identifiers = await agent.didManagerFind();
+        const adminDid = identifiers[0].did;
+
         const credential = await agent.createVerifiableCredential({
             credential: {
-                issuer: { id: 'did:ethr:sepolia:0xYOUR_ADMIN_DID_HERE' },
+                issuer: { id: adminDid },
                 credentialSubject: {
                     id: operatorDid,
                     permit: {
@@ -134,12 +177,16 @@ app.post('/api/issue-permit', async (req, res) => {
         });
 
         res.json(credential);
+
     } catch (e) {
+        console.error("❌ VC ERROR:", e);
         res.status(500).json({ error: e.message });
     }
 });
 
-// ✅ VERIFY
+// =======================
+// 🔍 VERIFY VC
+// =======================
 app.post('/api/verify-permit', async (req, res) => {
     try {
         const { vc } = req.body;
