@@ -21,3 +21,7 @@ export const issuePermit = (data) => API.post('/issue-permit', data);
 export const verifyPermit = (vc) => API.post('/verify-permit', { vc });
 
 export const checkAccess = (data) => API.post('/check-access', data);
+
+
+export const executeAction = (data) =>
+    axios.post('http://localhost:5000/api/execute', data);

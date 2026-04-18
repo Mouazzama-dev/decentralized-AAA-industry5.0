@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import { agent } from '../agent.js';
 import fs from 'fs';
+import { ethers } from 'ethers';
+import * as dotenv from 'dotenv';
+dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -10,7 +13,28 @@ app.use(express.json());
 const ADMIN_WALLET_ADDRESS = "0x5d1a7e1b7dc23d2e1f677e1ed919fb501d36205e";
 
 // =======================
-// STATE FILE
+// 🔗 BLOCKCHAIN CONFIG
+// =======================
+const RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+
+const PRIVATE_KEY = "0xf58599b4f5d5b15d7158226f7dc3e611ffdd8ff608def33bab39f1add282eff1"; // 🔥 move key to .env
+const CONTRACT_ADDRESS = "0x5b23fFb4956E20dC719b4d09c48829871aD244C3";
+
+const ABI = ["function logBatch(string,string,uint8[])"];
+
+const ACTION_MAP = {
+    "MOVE_UP": 0,
+    "MOVE_DOWN": 1,
+    "SWITCH_ON": 2,
+    "SWITCH_OFF": 3,
+    "ROTATE": 4,
+    "CUT": 5
+};
+
+let sessionBuffer = [];
+
+// =======================
+// 📁 STATE
 // =======================
 const STATE_FILE = './did-state.json';
 
@@ -33,7 +57,7 @@ const saveState = () => {
 let { activeDids, inactiveDids } = loadState();
 
 // =======================
-// ADMIN CHECK
+// 🔐 ADMIN CHECK
 // =======================
 app.post('/api/is-admin', (req, res) => {
     const { address } = req.body;
@@ -41,7 +65,7 @@ app.post('/api/is-admin', (req, res) => {
 });
 
 // =======================
-// GET IDENTITIES
+// 📜 GET IDENTITIES
 // =======================
 app.get('/api/identities', async (req, res) => {
     try {
@@ -65,41 +89,7 @@ app.get('/api/identities', async (req, res) => {
 });
 
 // =======================
-// ACTIVATE
-// =======================
-app.post('/api/activate-did', (req, res) => {
-    const { did, address } = req.body;
-
-    if (!address || address.toLowerCase() !== ADMIN_WALLET_ADDRESS) {
-        return res.status(403).json({ error: "Only admin" });
-    }
-
-    inactiveDids = inactiveDids.filter(d => d !== did);
-    if (!activeDids.includes(did)) activeDids.push(did);
-
-    saveState();
-    res.json({ success: true });
-});
-
-// =======================
-// DEACTIVATE
-// =======================
-app.post('/api/deactivate-did', (req, res) => {
-    const { did, address } = req.body;
-
-    if (!address || address.toLowerCase() !== ADMIN_WALLET_ADDRESS) {
-        return res.status(403).json({ error: "Only admin" });
-    }
-
-    activeDids = activeDids.filter(d => d !== did);
-    if (!inactiveDids.includes(did)) inactiveDids.push(did);
-
-    saveState();
-    res.json({ success: true });
-});
-
-// =======================
-// REGISTER
+// 🆕 REGISTER
 // =======================
 app.post('/api/register', async (req, res) => {
     try {
@@ -117,14 +107,14 @@ app.post('/api/register', async (req, res) => {
 });
 
 // =======================
-// ISSUE VC (🔥 FIXED)
+// 🔐 ISSUE VC
 // =======================
 app.post('/api/issue-permit', async (req, res) => {
     try {
         const { operatorDid, deviceDid, address } = req.body;
 
         if (!address || address.toLowerCase() !== ADMIN_WALLET_ADDRESS) {
-            return res.status(403).json({ error: "Only admin can issue" });
+            return res.status(403).json({ error: "Only admin" });
         }
 
         const identifiers = await agent.didManagerFind();
@@ -142,58 +132,119 @@ app.post('/api/issue-permit', async (req, res) => {
             proofFormat: 'jwt'
         });
 
-        // 🔥 THIS WAS MISSING
         await agent.dataStoreSaveVerifiableCredential({
             verifiableCredential: credential
         });
 
         console.log("✅ VC SAVED");
-
         res.json(credential);
 
     } catch (e) {
-        console.error("❌ VC ERROR:", e);
         res.status(500).json({ error: e.message });
     }
 });
 
 // =======================
-// ACCESS CHECK
+// 🔍 ACCESS CHECK
 // =======================
+const checkAccessInternal = async (operatorDid, deviceDid, action) => {
+    const identifiers = await agent.didManagerFind();
+    const admin = identifiers.find(i => i.alias === 'factory-admin');
+
+    const vcs = await agent.dataStoreORMGetVerifiableCredentials({
+        where: [{ column: 'subject', value: [operatorDid] }]
+    });
+
+    const validPermit = vcs.find(vc => {
+        const c = vc.verifiableCredential;
+        return (
+            c.issuer.id === admin.did &&
+            c.credentialSubject.authorizedDeviceId === deviceDid
+        );
+    });
+
+    if (!validPermit) {
+        return { success: false, reason: "NO_PERMIT" };
+    }
+
+    const allowed = validPermit.verifiableCredential.credentialSubject.allowedActions;
+
+    if (!allowed.includes(action)) {
+        return { success: false, reason: "INVALID_ACTION" };
+    }
+
+    return { success: true };
+};
+
 app.post('/api/check-access', async (req, res) => {
     try {
         const { operatorDid, deviceDid, action } = req.body;
+        const result = await checkAccessInternal(operatorDid, deviceDid, action);
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
-        const identifiers = await agent.didManagerFind();
-        const admin = identifiers.find(i => i.alias === 'factory-admin');
+// =======================
+// 🔗 BLOCKCHAIN FUNCTION
+// =======================
+async function sendBatchToBlockchain(opDid, devDid, batch) {
+    try {
+        const provider = new ethers.JsonRpcProvider(RPC);
+        const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
 
-        const vcs = await agent.dataStoreORMGetVerifiableCredentials({
-            where: [{ column: 'subject', value: [operatorDid] }]
-        });
+        const tx = await contract.logBatch(opDid, devDid, batch);
+        console.log("⏳ TX:", tx.hash);
 
-        console.log("VC COUNT:", vcs.length);
+        await tx.wait();
+        console.log("✅ ON-CHAIN LOGGED");
 
-        const validPermit = vcs.find(vc => {
-            const c = vc.verifiableCredential;
-            return (
-                c.issuer.id === admin.did &&
-                c.credentialSubject.authorizedDeviceId === deviceDid
-            );
-        });
+    } catch (e) {
+        console.error("❌ Blockchain Error:", e.message);
+    }
+}
 
-        if (!validPermit) {
-            return res.json({ success: false, reason: "NO_PERMIT" });
+// =======================
+// 🚀 EXECUTE + BLOCKCHAIN
+// =======================
+app.post('/api/execute', async (req, res) => {
+    try {
+        const { operatorDid, deviceDid, action } = req.body;
+
+        console.log("\n🚀 EXECUTION START");
+
+        // 🔐 verify
+        const check = await checkAccessInternal(operatorDid, deviceDid, action);
+
+        if (!check.success) {
+            console.log("❌ BLOCKED:", check.reason);
+            return res.json(check);
         }
 
-        const allowed = validPermit.verifiableCredential.credentialSubject.allowedActions;
+        // 🧾 local log
+        fs.appendFileSync('factory_audit.log',
+            `[${new Date().toISOString()}] ${operatorDid} → ${deviceDid} → ${action}\n`
+        );
 
-        if (!allowed.includes(action)) {
-            return res.json({ success: false, reason: "INVALID_ACTION" });
+        console.log("💾 LOCAL LOG SAVED");
+
+        // 📦 batching
+        sessionBuffer.push(ACTION_MAP[action]);
+
+        console.log(`📊 Buffer: ${sessionBuffer.length}/10`);
+
+        if (sessionBuffer.length >= 10) {
+            console.log("📦 Sending batch to blockchain...");
+            await sendBatchToBlockchain(operatorDid, deviceDid, sessionBuffer);
+            sessionBuffer = [];
         }
 
         return res.json({ success: true });
 
     } catch (e) {
+        console.error("❌ EXECUTION ERROR:", e);
         res.status(500).json({ error: e.message });
     }
 });

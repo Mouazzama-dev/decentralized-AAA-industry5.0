@@ -7,7 +7,8 @@
     "did:ethr:sepolia:0x039fa478bb53afab064298869ccbfd77cdaafc10b099e05a8f866ee27871b24b64",
     "did:ethr:sepolia:0x03fdec5cc6aad104c5289a90934d8c6a827925595ea630964ef11d978ab483ebbe",
     "did:ethr:sepolia:0x03de4699c739c74ce126cc309ce0852efa99640d7f27fc20a4a6b275ffd6d56c16",
-    "did:ethr:sepolia:0x02f0772f999cc2df0544755a08a6a3edbcca7fb5df14587d06ad26f12e79af274f"
+    "did:ethr:sepolia:0x02f0772f999cc2df0544755a08a6a3edbcca7fb5df14587d06ad26f12e79af274f",
+    "did:ethr:sepolia:0x03b2f39ebecf1aa8775a725d7d2bb14b87123db799ef6563ceb1924656028d9bc6"
   ],
   "inactiveDids": []
 }
