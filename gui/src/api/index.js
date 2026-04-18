@@ -19,3 +19,5 @@ export const deactivateDID = (data) => API.post('/deactivate-did', data);
 // ✅ VC
 export const issuePermit = (data) => API.post('/issue-permit', data);
 export const verifyPermit = (vc) => API.post('/verify-permit', { vc });
+
+export const checkAccess = (data) => API.post('/check-access', data);

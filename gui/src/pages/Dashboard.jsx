@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { getIdentities } from '../api';
 import { Play, ShieldAlert, Terminal, Activity, Cpu } from 'lucide-react';
 import '../styles/dashboard.css';
+import { checkAccess } from '../api'; 
+
 
 const Dashboard = () => {
     const [operators, setOperators] = useState([]);
@@ -24,18 +26,40 @@ const Dashboard = () => {
         setLogs(prev => [{ time: new Date().toLocaleTimeString(), msg }, ...prev]);
     };
 
-    const handleVerifyAccess = () => {
-        if (!selectedOp || !selectedDev) return;
-        
-        addLog(`Verifying DID: ${selectedOp.slice(0, 20)}...`);
-        
-        // Mocking VC Verification logic
-        setTimeout(() => {
+
+const handleVerifyAccess = async () => {
+    if (!selectedOp || !selectedDev) return;
+
+    addLog("🔍 Verifying access...");
+
+    try {
+        const res = await checkAccess({
+            operatorDid: selectedOp,
+            deviceDid: selectedDev,
+            action: "SWITCH_ON" // test action
+        });
+
+        if (res.data.success) {
             setIsVerified(true);
-            addLog("✅ Access Granted: Valid Verifiable Credential found.");
-            addLog(`Resource ${selectedDev.slice(0, 15)} is now UNLOCKED.`);
-        }, 1500);
-    };
+            addLog("✅ ACCESS GRANTED");
+            addLog("Machine UNLOCKED");
+        } else {
+            setIsVerified(false);
+
+            if (res.data.reason === "NO_PERMIT") {
+                addLog("❌ ACCESS DENIED (No Permit)");
+            }
+
+            if (res.data.reason === "INVALID_ACTION") {
+                addLog("🚫 ACTION NOT ALLOWED");
+            }
+        }
+
+    } catch (err) {
+        console.error(err);
+        addLog("❌ Verification Error");
+    }
+};
 
     const handleExecute = () => {
         addLog("🚀 COMMAND SENT: Starting Industrial Sequence...");
