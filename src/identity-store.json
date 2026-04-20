@@ -1,0 +1,37 @@
+{
+  "operators": [
+    {
+      "alias": "Elena",
+      "did": "did:ethr:sepolia:0x03cda91909190346276d5770a9fba023b772b800ee3260e63b3374b5281737b725",
+      "type": "operator",
+      "status": "ACTIVE"
+    },
+    {
+      "alias": "Marco",
+      "did": "did:ethr:sepolia:0x03b142e8fb1262a3c5b417774e65907583e68bcc6d97f3e8519f20853fd787ea1a",
+      "type": "operator",
+      "status": "ACTIVE"
+    },
+    {
+      "alias": "Andrea",
+      "did": "did:ethr:sepolia:0x02d9de0d452eccd415ce0757a5e8e94bfba1c89e9b971752c31215f33f2864f802",
+      "type": "operator",
+      "status": "ACTIVE"
+    }
+  ],
+  "machines": [
+    {
+      "alias": "Welding Robot",
+      "did": "did:ethr:sepolia:0x022cb3dab3ecac8068aa1908fd8eee372cd6aefbf2c6ca582146a5aa4c8b7a1e84",
+      "type": "machine",
+      "status": "ACTIVE"
+    },
+    {
+      "alias": "Cnc lathe",
+      "did": "did:ethr:sepolia:0x02234f4955fe05612ad1c131b6a6ec172accf05b00e26614504f58fbdcd9e66f17",
+      "type": "machine",
+      "status": "ACTIVE"
+    }
+  ],
+  "pending": []
+}

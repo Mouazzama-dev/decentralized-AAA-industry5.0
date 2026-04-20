@@ -2,251 +2,200 @@ import express from 'express';
 import cors from 'cors';
 import { agent } from '../agent.js';
 import fs from 'fs';
+import path from 'path';
 import { ethers } from 'ethers';
 import * as dotenv from 'dotenv';
+
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const ADMIN_WALLET_ADDRESS = "0x5d1a7e1b7dc23d2e1f677e1ed919fb501d36205e";
-
 // =======================
-// 🔗 BLOCKCHAIN CONFIG
+// ⚙️ ENV CONFIG
 // =======================
-const RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+const PORT = process.env.PORT || 5000;
+const RPC = process.env.RPC;
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
+const ADMIN_WALLET_ADDRESS = (process.env.ADMIN_WALLET_ADDRESS || "").toLowerCase();
+const BATCH_SIZE = Number(process.env.BATCH_SIZE || 10);
 
-const PRIVATE_KEY = "0xf58599b4f5d5b15d7158226f7dc3e611ffdd8ff608def33bab39f1add282eff1"; // 🔥 move key to .env
-const CONTRACT_ADDRESS = "0x5b23fFb4956E20dC719b4d09c48829871aD244C3";
+if (!PRIVATE_KEY) {
+    throw new Error("❌ PRIVATE_KEY missing");
+}
 
 const ABI = ["function logBatch(string,string,uint8[])"];
 
 const ACTION_MAP = {
-    "MOVE_UP": 0,
-    "MOVE_DOWN": 1,
-    "SWITCH_ON": 2,
-    "SWITCH_OFF": 3,
-    "ROTATE": 4,
-    "CUT": 5
+    MOVE_UP: 0,
+    MOVE_DOWN: 1,
+    SWITCH_ON: 2,
+    SWITCH_OFF: 3,
+    ROTATE: 4,
+    CUT: 5
 };
 
-let sessionBuffer = [];
+const ALLOWED_ACTIONS = Object.keys(ACTION_MAP);
 
 // =======================
-// 📁 STATE
+// 📁 FILES
 // =======================
-const STATE_FILE = './did-state.json';
+const STATE_FILE = path.resolve('./did-state.json');
+const DB_FILE = path.resolve('./identity-store.json');
 
+// =======================
+// 📁 LOAD STATE
+// =======================
 const loadState = () => {
-    try {
-        if (fs.existsSync(STATE_FILE)) {
-            return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
-        }
-    } catch {}
-    return { activeDids: ['factory-admin'], inactiveDids: [] };
-};
-
-const saveState = () => {
-    fs.writeFileSync(
-        STATE_FILE,
-        JSON.stringify({ activeDids, inactiveDids }, null, 2)
-    );
+    if (fs.existsSync(STATE_FILE)) {
+        return JSON.parse(fs.readFileSync(STATE_FILE));
+    }
+    return { activeDids: [], inactiveDids: [] };
 };
 
 let { activeDids, inactiveDids } = loadState();
 
+const saveState = () => {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ activeDids, inactiveDids }, null, 2));
+};
+
+// =======================
+// 📁 LOAD DB (NEW)
+// =======================
+const loadDB = () => {
+    if (fs.existsSync(DB_FILE)) {
+        return JSON.parse(fs.readFileSync(DB_FILE));
+    }
+    return { operators: [], machines: [], pending: [] };
+};
+
+const saveDB = (data) => {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+};
+
 // =======================
 // 🔐 ADMIN CHECK
 // =======================
+const isAdmin = (addr) => addr?.toLowerCase() === ADMIN_WALLET_ADDRESS;
+
 app.post('/api/is-admin', (req, res) => {
-    const { address } = req.body;
-    res.json({ isAdmin: address?.toLowerCase() === ADMIN_WALLET_ADDRESS });
+    res.json({ isAdmin: isAdmin(req.body.address) });
 });
 
 // =======================
-// 📜 GET IDENTITIES
-// =======================
-app.get('/api/identities', async (req, res) => {
-    try {
-        const identifiers = await agent.didManagerFind();
-
-        const formatted = identifiers.map(i => ({
-            alias: i.alias,
-            did: i.did,
-            type: i.alias.includes('robot') ? 'device' : 'operator',
-            status: inactiveDids.includes(i.did)
-                ? 'INACTIVE'
-                : activeDids.includes(i.did) || i.alias === 'factory-admin'
-                ? 'ACTIVE'
-                : 'PENDING'
-        }));
-
-        res.json(formatted);
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// =======================
-// 🆕 REGISTER
+// 🆕 REGISTER (UPDATED)
 // =======================
 app.post('/api/register', async (req, res) => {
     try {
-        const { alias } = req.body;
+        const { alias, type } = req.body;
+
+        if (!alias || !type) {
+            return res.status(400).json({ error: "alias + type required" });
+        }
 
         const identity = await agent.didManagerCreate({
             alias,
             provider: 'did:ethr:sepolia'
         });
 
-        res.json({ alias, did: identity.did });
+        const db = loadDB();
+
+        db.pending.push({
+            alias,
+            did: identity.did,
+            type, // operator / machine
+            status: "PENDING"
+        });
+
+        saveDB(db);
+
+        res.json({
+            success: true,
+            did: identity.did,
+            status: "PENDING"
+        });
+
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
 
 // =======================
-// 🔐 ISSUE VC
+// 📜 GET ALL (UPDATED)
 // =======================
-app.post('/api/issue-permit', async (req, res) => {
-    try {
-        const { operatorDid, deviceDid, address } = req.body;
-
-        if (!address || address.toLowerCase() !== ADMIN_WALLET_ADDRESS) {
-            return res.status(403).json({ error: "Only admin" });
-        }
-
-        const identifiers = await agent.didManagerFind();
-        const admin = identifiers.find(i => i.alias === 'factory-admin');
-
-        const credential = await agent.createVerifiableCredential({
-            credential: {
-                issuer: { id: admin.did },
-                credentialSubject: {
-                    id: operatorDid,
-                    authorizedDeviceId: deviceDid,
-                    allowedActions: ["SWITCH_ON","SWITCH_OFF","MOVE_UP","MOVE_DOWN"]
-                }
-            },
-            proofFormat: 'jwt'
-        });
-
-        await agent.dataStoreSaveVerifiableCredential({
-            verifiableCredential: credential
-        });
-
-        console.log("✅ VC SAVED");
-        res.json(credential);
-
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
+app.get('/api/identity/all', (req, res) => {
+    res.json(loadDB());
 });
 
+// =======================
+// ✅ APPROVE (NEW)
+// =======================
+app.post('/api/approve', (req, res) => {
+    const { did, address } = req.body;
+
+    if (!address || address.toLowerCase() !== ADMIN_WALLET_ADDRESS) {
+        return res.status(403).json({ error: "Only admin can approve" });
+    }
+
+    const db = loadDB();
+
+    const index = db.pending.findIndex(i => i.did === did);
+
+    if (index === -1) {
+        return res.status(404).json({ error: "Not found" });
+    }
+
+    const item = db.pending.splice(index, 1)[0];
+    item.status = "ACTIVE";
+
+    if (item.type === "operator") {
+        db.operators.push(item);
+    } else {
+        db.machines.push(item);
+    }
+
+    if (!activeDids.includes(item.did)) {
+        activeDids.push(item.did);
+        saveState();
+    }
+
+    saveDB(db);
+
+    res.json({ success: true });
+});
+
+// =======================
+// 📜 GET IDENTITIES (OLD + ACTIVE)
+// =======================
+app.get('/api/identity/all', (req, res) => {
+    res.json(loadDB());
+});
 // =======================
 // 🔍 ACCESS CHECK
 // =======================
-const checkAccessInternal = async (operatorDid, deviceDid, action) => {
-    const identifiers = await agent.didManagerFind();
-    const admin = identifiers.find(i => i.alias === 'factory-admin');
-
-    const vcs = await agent.dataStoreORMGetVerifiableCredentials({
-        where: [{ column: 'subject', value: [operatorDid] }]
-    });
-
-    const validPermit = vcs.find(vc => {
-        const c = vc.verifiableCredential;
-        return (
-            c.issuer.id === admin.did &&
-            c.credentialSubject.authorizedDeviceId === deviceDid
-        );
-    });
-
-    if (!validPermit) {
-        return { success: false, reason: "NO_PERMIT" };
-    }
-
-    const allowed = validPermit.verifiableCredential.credentialSubject.allowedActions;
-
-    if (!allowed.includes(action)) {
-        return { success: false, reason: "INVALID_ACTION" };
-    }
-
-    return { success: true };
-};
-
 app.post('/api/check-access', async (req, res) => {
-    try {
-        const { operatorDid, deviceDid, action } = req.body;
-        const result = await checkAccessInternal(operatorDid, deviceDid, action);
-        res.json(result);
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+    const { operatorDid, deviceDid, action } = req.body;
+
+    if (!operatorDid || !deviceDid || !action) {
+        return res.json({ success: false, reason: "MISSING_FIELDS" });
     }
+
+    if (!ALLOWED_ACTIONS.includes(action)) {
+        return res.json({ success: false, reason: "UNKNOWN_ACTION" });
+    }
+
+    if (inactiveDids.includes(operatorDid)) {
+        return res.json({ success: false, reason: "INACTIVE" });
+    }
+
+    return res.json({ success: true });
 });
 
 // =======================
-// 🔗 BLOCKCHAIN FUNCTION
+// 🚀 START
 // =======================
-async function sendBatchToBlockchain(opDid, devDid, batch) {
-    try {
-        const provider = new ethers.JsonRpcProvider(RPC);
-        const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, wallet);
-
-        const tx = await contract.logBatch(opDid, devDid, batch);
-        console.log("⏳ TX:", tx.hash);
-
-        await tx.wait();
-        console.log("✅ ON-CHAIN LOGGED");
-
-    } catch (e) {
-        console.error("❌ Blockchain Error:", e.message);
-    }
-}
-
-// =======================
-// 🚀 EXECUTE + BLOCKCHAIN
-// =======================
-app.post('/api/execute', async (req, res) => {
-    try {
-        const { operatorDid, deviceDid, action } = req.body;
-
-        console.log("\n🚀 EXECUTION START");
-
-        // 🔐 verify
-        const check = await checkAccessInternal(operatorDid, deviceDid, action);
-
-        if (!check.success) {
-            console.log("❌ BLOCKED:", check.reason);
-            return res.json(check);
-        }
-
-        // 🧾 local log
-        fs.appendFileSync('factory_audit.log',
-            `[${new Date().toISOString()}] ${operatorDid} → ${deviceDid} → ${action}\n`
-        );
-
-        console.log("💾 LOCAL LOG SAVED");
-
-        // 📦 batching
-        sessionBuffer.push(ACTION_MAP[action]);
-
-        console.log(`📊 Buffer: ${sessionBuffer.length}/10`);
-
-        if (sessionBuffer.length >= 10) {
-            console.log("📦 Sending batch to blockchain...");
-            await sendBatchToBlockchain(operatorDid, deviceDid, sessionBuffer);
-            sessionBuffer = [];
-        }
-
-        return res.json({ success: true });
-
-    } catch (e) {
-        console.error("❌ EXECUTION ERROR:", e);
-        res.status(500).json({ error: e.message });
-    }
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on ${PORT}`);
 });
-
-app.listen(5000, () => console.log("🚀 Server running on 5000"));

@@ -8,7 +8,12 @@
     "did:ethr:sepolia:0x03fdec5cc6aad104c5289a90934d8c6a827925595ea630964ef11d978ab483ebbe",
     "did:ethr:sepolia:0x03de4699c739c74ce126cc309ce0852efa99640d7f27fc20a4a6b275ffd6d56c16",
     "did:ethr:sepolia:0x02f0772f999cc2df0544755a08a6a3edbcca7fb5df14587d06ad26f12e79af274f",
-    "did:ethr:sepolia:0x03b2f39ebecf1aa8775a725d7d2bb14b87123db799ef6563ceb1924656028d9bc6"
+    "did:ethr:sepolia:0x03b2f39ebecf1aa8775a725d7d2bb14b87123db799ef6563ceb1924656028d9bc6",
+    "did:ethr:sepolia:0x022cb3dab3ecac8068aa1908fd8eee372cd6aefbf2c6ca582146a5aa4c8b7a1e84",
+    "did:ethr:sepolia:0x03cda91909190346276d5770a9fba023b772b800ee3260e63b3374b5281737b725",
+    "did:ethr:sepolia:0x03b142e8fb1262a3c5b417774e65907583e68bcc6d97f3e8519f20853fd787ea1a",
+    "did:ethr:sepolia:0x02234f4955fe05612ad1c131b6a6ec172accf05b00e26614504f58fbdcd9e66f17",
+    "did:ethr:sepolia:0x02d9de0d452eccd415ce0757a5e8e94bfba1c89e9b971752c31215f33f2864f802"
   ],
   "inactiveDids": []
 }
