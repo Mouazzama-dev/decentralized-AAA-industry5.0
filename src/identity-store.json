@@ -31,7 +31,35 @@
       "did": "did:ethr:sepolia:0x02234f4955fe05612ad1c131b6a6ec172accf05b00e26614504f58fbdcd9e66f17",
       "type": "machine",
       "status": "ACTIVE"
+    },
+    {
+      "alias": "cnc lathe 3",
+      "did": "did:ethr:sepolia:0x0274ccd0214f6dc69684668ff3944b055d78bac68ee214030bb17d9600795ce0dd",
+      "type": "machine",
+      "status": "ACTIVE",
+      "allowedActions": [
+        "MOVE_DOWN",
+        "ROTATE"
+      ]
+    },
+    {
+      "alias": "Welding robot 3",
+      "did": "did:ethr:sepolia:0x03fa42c22a89992a7870dbf6c6a97b60ec5802d1276b4a0696367cffef99318ff3",
+      "type": "machine",
+      "status": "ACTIVE",
+      "allowedActions": [
+        "LOAD",
+        "UNLOAD"
+      ]
     }
   ],
-  "pending": []
+  "pending": [
+    {
+      "alias": "Cnc lathe 2",
+      "did": "did:ethr:sepolia:0x03a52c9e3febbf099b6b6f6f531baa9d941c5529564a2ff5f881a435228a1faa5e",
+      "type": "operator",
+      "status": "PENDING",
+      "allowedActions": []
+    }
+  ]
 }
