@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { ethers } from 'ethers';
 import * as dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import { ACTION_MAP, ALLOWED_ACTIONS } from './actionmap.js';
 
 dotenv.config();
@@ -25,6 +26,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const ADMIN_WALLET_ADDRESS = (process.env.ADMIN_WALLET_ADDRESS || "").toLowerCase();
 const BATCH_SIZE = Number(process.env.BATCH_SIZE || 10);
+const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/factory_db";
 
 if (!PRIVATE_KEY) {
   throw new Error("❌ PRIVATE_KEY missing");
@@ -32,17 +34,41 @@ if (!PRIVATE_KEY) {
 
 const ABI = ["function logBatch(string,string,uint8[])"];
 
+// =======================
+// 🍃 MONGODB CONNECTION & SCHEMAS
+// =======================
+mongoose.connect(MONGO_URI)
+  .then(() => console.log("🍃 MongoDB Connected Successfully"))
+  .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
+// Schema 1: Identity Store (Operators, Machines, Pending)
+const IdentityStoreSchema = new mongoose.Schema({
+  key: { type: String, default: "main_store", unique: true },
+  operators: { type: Array, default: [] },
+  machines: { type: Array, default: [] },
+  pending: { type: Array, default: [] }
+}, { timestamps: true });
+
+const IdentityModel = mongoose.model('IdentityStore', IdentityStoreSchema);
+
+// Schema 2: DID State (Active / Inactive DIDs)
+const DidStateSchema = new mongoose.Schema({
+  key: { type: String, default: "main_state", unique: true },
+  activeDids: { type: Array, default: [] },
+  inactiveDids: { type: Array, default: [] }
+}, { timestamps: true });
+
+const DidStateModel = mongoose.model('DidState', DidStateSchema);
 
 // =======================
-// 📁 FILES
+// 📁 FILES CONFIG
 // =======================
 const STATE_FILE = path.resolve('./did-state.json');
 const DB_FILE = path.resolve('./identity-store.json');
 const AUDIT_FILE = path.resolve('./factory_audit.log');
 
 // =======================
-// 📁 LOAD STATE
+// 📁 LOAD STATE & DB (From JSON on Startup)
 // =======================
 const loadState = () => {
   if (fs.existsSync(STATE_FILE)) {
@@ -53,16 +79,6 @@ const loadState = () => {
 
 let { activeDids, inactiveDids } = loadState();
 
-const saveState = () => {
-  fs.writeFileSync(
-    STATE_FILE,
-    JSON.stringify({ activeDids, inactiveDids }, null, 2)
-  );
-};
-
-// =======================
-// 📁 LOAD DB
-// =======================
 const loadDB = () => {
   if (fs.existsSync(DB_FILE)) {
     return JSON.parse(fs.readFileSync(DB_FILE));
@@ -70,8 +86,44 @@ const loadDB = () => {
   return { operators: [], machines: [], pending: [] };
 };
 
-const saveDB = (data) => {
+// =======================
+// 💾 ASYNC SAVE FUNCTIONS (JSON + MongoDB Sync)
+// =======================
+const saveState = async () => {
+  // 1. Save to JSON
+  fs.writeFileSync(
+    STATE_FILE,
+    JSON.stringify({ activeDids, inactiveDids }, null, 2)
+  );
+
+  // 2. Mirror to MongoDB
+  try {
+    await DidStateModel.findOneAndUpdate(
+      { key: "main_state" },
+      { activeDids, inactiveDids },
+      { upsert: true, new: true }
+    );
+    console.log("🍃 DID State mirrored to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB State Sync Error:", err.message);
+  }
+};
+
+const saveDB = async (data) => {
+  // 1. Save to JSON
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+
+  // 2. Mirror to MongoDB
+  try {
+    await IdentityModel.findOneAndUpdate(
+      { key: "main_store" },
+      { operators: data.operators, machines: data.machines, pending: data.pending },
+      { upsert: true, new: true }
+    );
+    console.log("🍃 Identity DB mirrored to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB DB Sync Error:", err.message);
+  }
 };
 
 // =======================
@@ -97,8 +149,6 @@ app.post('/api/is-admin', (req, res) => {
 
 // =======================
 // 🆕 REGISTER
-// type = operator | machine
-// machine ke saath allowedActions save honge
 // =======================
 app.post('/api/register', async (req, res) => {
   try {
@@ -127,7 +177,8 @@ app.post('/api/register', async (req, res) => {
       allowedActions: type === "machine" ? normalizeMachineActions(allowedActions) : []
     });
 
-    saveDB(db);
+    // Await database saving since MongoDB operations are async
+    await saveDB(db);
 
     res.json({
       success: true,
@@ -141,7 +192,6 @@ app.post('/api/register', async (req, res) => {
 
 // =======================
 // 📜 GET ALL
-// endpoint same
 // =======================
 app.get('/api/identity/all', (req, res) => {
   res.json(loadDB());
@@ -149,46 +199,46 @@ app.get('/api/identity/all', (req, res) => {
 
 // =======================
 // ✅ APPROVE
-// pending se active operators/machines me move
 // =======================
-app.post('/api/approve', (req, res) => {
-  const { did, address } = req.body;
+app.post('/api/approve', async (req, res) => {
+  try {
+    const { did, address } = req.body;
 
-  if (!address || address.toLowerCase() !== ADMIN_WALLET_ADDRESS) {
-    return res.status(403).json({ error: "Only admin can approve" });
+    if (!address || address.toLowerCase() !== ADMIN_WALLET_ADDRESS) {
+      return res.status(403).json({ error: "Only admin can approve" });
+    }
+
+    const db = loadDB();
+    const index = db.pending.findIndex(i => i.did === did);
+
+    if (index === -1) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    const item = db.pending.splice(index, 1)[0];
+    item.status = "ACTIVE";
+
+    if (item.type === "operator") {
+      db.operators.push(item);
+    } else {
+      db.machines.push(item);
+    }
+
+    if (!activeDids.includes(item.did)) {
+      activeDids.push(item.did);
+      await saveState(); // Await async state sync
+    }
+
+    await saveDB(db); // Await async DB sync
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-
-  const db = loadDB();
-  const index = db.pending.findIndex(i => i.did === did);
-
-  if (index === -1) {
-    return res.status(404).json({ error: "Not found" });
-  }
-
-  const item = db.pending.splice(index, 1)[0];
-  item.status = "ACTIVE";
-
-  if (item.type === "operator") {
-    db.operators.push(item);
-  } else {
-    db.machines.push(item);
-  }
-
-  if (!activeDids.includes(item.did)) {
-    activeDids.push(item.did);
-    saveState();
-  }
-
-  saveDB(db);
-
-  res.json({ success: true });
 });
 
 // =======================
 // 🔍 ACCESS CHECK
-// endpoint same
-// global ALLOWED_ACTIONS hard block remove
-// actual permission VC se hoga
 // =======================
 app.post('/api/check-access', async (req, res) => {
   const { operatorDid, deviceDid, action } = req.body;
@@ -210,8 +260,6 @@ app.post('/api/check-access', async (req, res) => {
 
 // =======================
 // 🔐 ISSUE PERMIT
-// machine ke stored allowedActions use honge
-// endpoint same
 // =======================
 app.post('/api/issue-permit', async (req, res) => {
   try {
@@ -303,7 +351,6 @@ app.post('/api/resolve-did', async (req, res) => {
 
 // =======================
 // 2️⃣ VERIFY VC
-// endpoint same
 // =======================
 app.post('/api/verify-vc', async (req, res) => {
   try {
@@ -333,8 +380,6 @@ app.post('/api/verify-vc', async (req, res) => {
 
 // =======================
 // 3️⃣ AUTHORIZE
-// endpoint same
-// VC allowedActions ke basis pe
 // =======================
 app.post('/api/authorize', (req, res) => {
   try {
@@ -371,8 +416,6 @@ app.post('/api/authorize', (req, res) => {
 
 // =======================
 // 4️⃣ LOG
-// endpoint same
-// names show honge, DID nahi
 // =======================
 app.post('/api/log', async (req, res) => {
   try {
@@ -400,8 +443,6 @@ app.post('/api/log', async (req, res) => {
 
 // =======================
 // 5️⃣ BATCH
-// endpoint same
-// bug fix: 0 falsy issue removed
 // =======================
 app.post('/api/batch', (req, res) => {
   try {
@@ -428,7 +469,6 @@ app.post('/api/batch', (req, res) => {
 
 // =======================
 // 6️⃣ BLOCKCHAIN
-// endpoint same
 // =======================
 app.post('/api/blockchain', async (req, res) => {
   try {
@@ -494,7 +534,6 @@ app.post('/api/blockchain', async (req, res) => {
 
 // =======================
 // 📜 GET LOGS
-// endpoint same
 // =======================
 app.get('/api/logs', (req, res) => {
   try {

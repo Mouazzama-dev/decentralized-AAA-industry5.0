@@ -17,6 +17,20 @@
       "did": "did:ethr:sepolia:0x02d9de0d452eccd415ce0757a5e8e94bfba1c89e9b971752c31215f33f2864f802",
       "type": "operator",
       "status": "ACTIVE"
+    },
+    {
+      "alias": "Mouazzama12345",
+      "did": "did:ethr:sepolia:0x02421ab886956d1a72b6a4ac917cef6085fdf4c66d2ad06d3484f5476214ddc922",
+      "type": "operator",
+      "status": "ACTIVE",
+      "allowedActions": []
+    },
+    {
+      "alias": "hello",
+      "did": "did:ethr:sepolia:0x02826e6ded98a1137e492c2fc497e9562945c28f20a9ddc8acdb0f3224ed154b8f",
+      "type": "operator",
+      "status": "ACTIVE",
+      "allowedActions": []
     }
   ],
   "machines": [
@@ -50,6 +64,30 @@
       "allowedActions": [
         "LOAD",
         "UNLOAD"
+      ]
+    },
+    {
+      "alias": "3d printer",
+      "did": "did:ethr:sepolia:0x03bcf3e116d49e4fabecb21376dea22c918dc759e836fd42947b400ab309ba3cac",
+      "type": "machine",
+      "status": "ACTIVE",
+      "allowedActions": [
+        "START",
+        "STOP",
+        "PAUSE",
+        "RESUME",
+        "RESET"
+      ]
+    },
+    {
+      "alias": "robotic arm ",
+      "did": "did:ethr:sepolia:0x032aa01c17f438c51dff43863bd7b49be39d9599d77dffa11e7758dd8586505a00",
+      "type": "machine",
+      "status": "ACTIVE",
+      "allowedActions": [
+        "ROTATE",
+        "ROTATE_CLOCKWISE",
+        "ROTATE_COUNTERCLOCKWISE"
       ]
     }
   ],

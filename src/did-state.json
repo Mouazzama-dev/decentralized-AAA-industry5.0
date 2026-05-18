@@ -15,7 +15,11 @@
     "did:ethr:sepolia:0x02234f4955fe05612ad1c131b6a6ec172accf05b00e26614504f58fbdcd9e66f17",
     "did:ethr:sepolia:0x02d9de0d452eccd415ce0757a5e8e94bfba1c89e9b971752c31215f33f2864f802",
     "did:ethr:sepolia:0x0274ccd0214f6dc69684668ff3944b055d78bac68ee214030bb17d9600795ce0dd",
-    "did:ethr:sepolia:0x03fa42c22a89992a7870dbf6c6a97b60ec5802d1276b4a0696367cffef99318ff3"
+    "did:ethr:sepolia:0x03fa42c22a89992a7870dbf6c6a97b60ec5802d1276b4a0696367cffef99318ff3",
+    "did:ethr:sepolia:0x02421ab886956d1a72b6a4ac917cef6085fdf4c66d2ad06d3484f5476214ddc922",
+    "did:ethr:sepolia:0x02826e6ded98a1137e492c2fc497e9562945c28f20a9ddc8acdb0f3224ed154b8f",
+    "did:ethr:sepolia:0x03bcf3e116d49e4fabecb21376dea22c918dc759e836fd42947b400ab309ba3cac",
+    "did:ethr:sepolia:0x032aa01c17f438c51dff43863bd7b49be39d9599d77dffa11e7758dd8586505a00"
   ],
   "inactiveDids": []
 }

@@ -26,6 +26,8 @@
     "ethers": "^6.16.0",
     "ethr-did-resolver": "^10.1.10",
     "express": "^5.2.1",
+    "mongodb": "^5.9.2",
+    "mongoose": "^9.6.2",
     "reflect-metadata": "^0.2.2",
     "typeorm": "^0.3.17"
   }
