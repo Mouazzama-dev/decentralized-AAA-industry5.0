@@ -48,3 +48,5 @@ artifacts/
 # Misc
 ########################################
 *.log
+src/did-state.json
+src/identity-store.json

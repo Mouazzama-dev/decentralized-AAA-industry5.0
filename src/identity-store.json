@@ -31,6 +31,27 @@
       "type": "operator",
       "status": "ACTIVE",
       "allowedActions": []
+    },
+    {
+      "alias": "Charlie",
+      "did": "did:ethr:sepolia:0x03f743494633364808230d23944dbcd756efdaaa4d21be35bcf30364fd41671b02",
+      "type": "operator",
+      "status": "ACTIVE",
+      "allowedActions": []
+    },
+    {
+      "alias": "Haiqa",
+      "did": "did:ethr:sepolia:0x021d82e9aeee8696585481bcf184b791d7a6c4ff23717ac56a07db5017eb29062e",
+      "type": "operator",
+      "status": "ACTIVE",
+      "allowedActions": []
+    },
+    {
+      "alias": "Andrea01",
+      "did": "did:ethr:sepolia:0x02559dbf4bc43ceff72e86127f58bd801d6a6f387a8e70f493b7bc39f62642d90a",
+      "type": "operator",
+      "status": "ACTIVE",
+      "allowedActions": []
     }
   ],
   "machines": [
@@ -89,6 +110,29 @@
         "ROTATE_CLOCKWISE",
         "ROTATE_COUNTERCLOCKWISE"
       ]
+    },
+    {
+      "alias": "robotic arm345",
+      "did": "did:ethr:sepolia:0x03cfd2361d0f30f6524c9d54acdfbebd5c159ba7592c9033f742c127fcfa1cbacb",
+      "type": "machine",
+      "status": "ACTIVE",
+      "allowedActions": [
+        "DRILL",
+        "GRIND",
+        "START",
+        "STOP",
+        "PAUSE"
+      ]
+    },
+    {
+      "alias": "RobotNew",
+      "did": "did:ethr:sepolia:0x02906b5ac3f221ebcb77aa63d69a480616ae6a1bcd77a4eda070feb6caf36ab437",
+      "type": "machine",
+      "status": "ACTIVE",
+      "allowedActions": [
+        "MOVE_LEFT",
+        "MOVE_RIGHT"
+      ]
     }
   ],
   "pending": [
@@ -98,6 +142,16 @@
       "type": "operator",
       "status": "PENDING",
       "allowedActions": []
+    },
+    {
+      "alias": "Robot12345",
+      "did": "did:ethr:sepolia:0x033a5ae1553bb2332c980708b608a9d4087b92b3460f41f8d1964271689bf71b1b",
+      "type": "machine",
+      "status": "PENDING",
+      "allowedActions": [
+        "MOVE_UP",
+        "MOVE_DOWN"
+      ]
     }
   ]
 }
