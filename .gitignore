@@ -50,3 +50,4 @@ artifacts/
 *.log
 src/did-state.json
 src/identity-store.json
+backend/config/env.js
