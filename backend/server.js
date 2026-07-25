@@ -1,11 +1,11 @@
-const app = require("./app");
+import app from "./app.js";
+import { PORT } from "./config/env.js";
+import connectMongoDB from "./config/mongodb.js";
 
 
-const PORT = 3000;
+await connectMongoDB();
 
 
 app.listen(PORT, () => {
-
     console.log(`Server running on port ${PORT}`);
-
 });
