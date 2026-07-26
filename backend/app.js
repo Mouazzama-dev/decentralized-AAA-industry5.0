@@ -4,6 +4,7 @@ import cors from "cors";
 import identityRoutes from "./routes/identity.routes.js";
 import testRoutes from "./routes/test.routes.js";
 import permitRoutes from "./routes/permit.routes.js";
+import authorizationRoutes from "./routes/authorization.routes.js";
 
 
 const app = express();
@@ -32,5 +33,9 @@ app.use(
     "/api/permit",
     permitRoutes
 );
-
+//Authorization routes
+app.use(
+    "/api/authorization",
+    authorizationRoutes
+);
 export default app;
