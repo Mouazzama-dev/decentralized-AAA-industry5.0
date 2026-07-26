@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 
 import identityRoutes from "./routes/identity.routes.js";
-import testRoutes from "./routes/test.routes.js";
+// import testRoutes from "./routes/test.routes.js";
 import permitRoutes from "./routes/permit.routes.js";
 import authorizationRoutes from "./routes/authorization.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
@@ -19,10 +19,10 @@ app.use(express.json());
 
 
 // Test route
-app.use(
-    "/api/test",
-    testRoutes
-);
+// app.use(
+//     "/api/test",
+//     testRoutes
+// );
 
 
 // Identity routes

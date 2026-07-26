@@ -24,9 +24,24 @@ const MerkleChainSchema = new mongoose.Schema({
     },
 
     status:{
-        type:String,
-        default:"PENDING"
-    },
+    type:String,
+    enum:[
+        "PENDING",
+        "PROCESSING",
+        "CONFIRMED",
+        "FAILED"
+    ],
+    default:"PENDING"
+},
+
+retryCount:{
+    type:Number,
+    default:0
+},
+
+lockedAt:{
+    type:Date
+},
 
     txHash:{
         type:String,
