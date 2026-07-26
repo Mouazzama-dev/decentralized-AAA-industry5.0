@@ -6,6 +6,8 @@ import testRoutes from "./routes/test.routes.js";
 import permitRoutes from "./routes/permit.routes.js";
 import authorizationRoutes from "./routes/authorization.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
+import batchRoutes from "./routes/batch.routes.js";
+
 
 
 const app = express();
@@ -43,5 +45,11 @@ app.use(
 app.use(
     "/api/audit",
     auditRoutes
+);
+
+
+app.use(
+    "/api/batch",
+    batchRoutes
 );
 export default app;
