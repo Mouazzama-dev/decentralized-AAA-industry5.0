@@ -29,6 +29,7 @@ const MerkleChainSchema = new mongoose.Schema({
         "PENDING",
         "PROCESSING",
         "CONFIRMED",
+        "WAITING_RETRY",
         "FAILED"
     ],
     default:"PENDING"

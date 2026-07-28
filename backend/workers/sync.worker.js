@@ -4,6 +4,10 @@ import {
     sendMerkleRoot
 } from "../blockchain/blockchain.service.js";
 
+import {
+    createNetworkIncident,
+    resolveNetworkIncident
+} from "../services/networkIncident.service.js";
 
 
 const startSyncWorker = ()=>{
@@ -11,27 +15,37 @@ const startSyncWorker = ()=>{
 
 setInterval(async()=>{
 
+    let pending = null;
+
 
     try {
 
 
-        const pending =
-await MerkleChain.findOneAndUpdate(
+        pending =
+        await MerkleChain.findOneAndUpdate(
 
-    {
-        status:"PENDING"
-    },
+            {
+                status:{
+                    $in:[
+                        "PENDING",
+                        "WAITING_RETRY"
+                    ]
+                }
+            },
 
-    {
-        status:"PROCESSING",
-        lockedAt:new Date()
-    },
+            {
+                status:"PROCESSING",
+                lockedAt:new Date()
+            },
 
-    {
-        new:true
-    }
+            {
+                new:true,
+                sort:{
+                    createdAt:1
+                }
+            }
 
-);
+        );
 
 
 
@@ -59,6 +73,7 @@ await MerkleChain.findOneAndUpdate(
         pending.status =
         "CONFIRMED";
 
+
         pending.lockedAt=null;
 
 
@@ -74,31 +89,55 @@ await MerkleChain.findOneAndUpdate(
 
 
 
+        // close network incident after recovery
+        await resolveNetworkIncident();
+
+
+
         console.log(
-          "✅ Root synced"
+            "Root logged successfully:",
+            result.txHash
         );
+
 
 
     }
     catch(error){
 
-    console.error(
-        "Sync failed:",
-        error.message
-    );
+
+        console.error(
+            "Sync failed:",
+            error.message
+        );
 
 
-    if(pending){
 
-        pending.status="FAILED";
+        await createNetworkIncident(
+            "RPC_CONNECTION_FAILED"
+        );
 
-        pending.retryCount += 1;
 
-        await pending.save();
+
+        if(pending){
+
+
+            pending.status =
+            "WAITING_RETRY";
+
+
+            pending.retryCount += 1;
+
+
+            pending.lockedAt=null;
+
+
+            await pending.save();
+
+
+        }
+
 
     }
-
-}
 
 
 },10000);
