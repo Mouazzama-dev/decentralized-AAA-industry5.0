@@ -51,3 +51,4 @@ artifacts/
 src/did-state.json
 src/identity-store.json
 backend/config/env.js
+backend/audit.db

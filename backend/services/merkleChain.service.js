@@ -1,10 +1,17 @@
 import crypto from "crypto";
+
 import MerkleChain from "../models/MerkleChain.js";
 
 
+
 const createChainedRoot = async(
+
     merkleRoot,
-    eventCount
+
+    eventCount,
+
+    batchId
+
 )=>{
 
 
@@ -18,40 +25,48 @@ const createChainedRoot = async(
 
 
     const previousRoot =
+
         lastRoot
+
         ?
+
         lastRoot.currentRoot
+
         :
+
         "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 
 
+
     const chainedRoot =
+
         crypto
         .createHash("sha256")
         .update(
+
             previousRoot +
             merkleRoot
+
         )
         .digest("hex");
 
 
 
-    const batchId =
-        "batch_" +
-        Date.now();
-
-
 
     const record =
+
         await MerkleChain.create({
 
             batchId,
 
+
             previousRoot,
+
 
             currentRoot:
             chainedRoot,
+
 
             eventCount
 
@@ -61,10 +76,13 @@ const createChainedRoot = async(
 
     return record;
 
+
 };
 
 
 
 export {
+
     createChainedRoot
+
 };
