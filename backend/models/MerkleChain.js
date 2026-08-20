@@ -18,6 +18,16 @@ const MerkleChainSchema = new mongoose.Schema({
         required:true
     },
 
+    signature:{
+        type:String,
+        default:null
+    },
+
+    publicKey:{
+        type:String,
+        default:null
+    },
+
     eventCount:{
         type:Number,
         default:0

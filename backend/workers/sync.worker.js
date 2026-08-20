@@ -14,6 +14,10 @@ import {
     resolveNetworkIncident
 } from "../services/networkIncident.service.js";
 
+import {
+    mergeAllPendingLocalChains
+} from "../services/localChain.service.js";
+
 
 let workerRunning = false;
 
@@ -215,6 +219,65 @@ const startSyncWorker = () => {
                     resolvedIncident.duration,
                     "seconds"
                 );
+
+
+                /*
+                 * After the incident is anchored, merge every
+                 * pending local (quarantine) chain into the main
+                 * chain — one independent chain per incident.
+                 *
+                 * - Clean incident chains -> re-chained, re-signed,
+                 *   inserted into the main chain as PENDING, their
+                 *   epoch root saved on the incident, and their
+                 *   local blocks dropped.
+                 * - Any tampered incident chain -> merge refused for
+                 *   that incident, offending batch reported, and
+                 *   anchoring halted this cycle. Retries next cycle.
+                 */
+                const mergeSummary =
+                    await mergeAllPendingLocalChains();
+
+                for (const r of mergeSummary.results) {
+
+                    if (r.merged && r.mergedCount > 0) {
+
+                        console.log(
+                            "✅ Local chain merged for incident",
+                            r.incidentId,
+                            "— blocks merged:",
+                            r.mergedCount
+                        );
+
+                    }
+
+                    if (!r.merged) {
+
+                        console.error(
+                            "🚨 LOCAL CHAIN TAMPERING DETECTED — merge refused for incident",
+                            r.incidentId
+                        );
+
+                        console.error(
+                            "🚨 Offending batches:",
+                            r.errors
+                                .map(e => `${e.batchId} (${e.type})`)
+                                .join(", ")
+                        );
+
+                    }
+
+                }
+
+                if (mergeSummary.anyTampered) {
+
+                    console.error(
+                        "⛔ Anchoring halted this cycle until tampered local chain(s) are resolved."
+                    );
+
+                    // Do not anchor anything this cycle.
+                    return;
+
+                }
 
             }
 
