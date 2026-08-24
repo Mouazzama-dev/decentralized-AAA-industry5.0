@@ -1,185 +1,205 @@
-# SSI-Based Skill Access Control for Smart Factory 5.0  
-### (IoT + Blockchain + Digital Twin Proof of Concept)
+# Decentralized AAA for Industry 5.0 — Tamper-Evident Audit Logging
 
-This repository demonstrates a **Proof of Concept (PoC)** for secure human–machine collaboration in a Smart Factory environment using:
+A blockchain-anchored audit logging system for a smart-factory access-control (AAA) scenario. Audit events (an operator acting on a machine) are batched, hashed into a Merkle root, and anchored on the Ethereum **Sepolia** testnet, producing a tamper-evident record.
 
-- Self-Sovereign Identity (DID)
-- W3C Verifiable Credentials (VC)
-- Verifiable Presentations (VP)
-- Gateway-based policy enforcement
-- Blockchain audit logging (Solidity on Sepolia)
-- IoT machine command simulation
+This branch (`Batching-txs`) adds **resilience and tamper detection for network outages**: while the blockchain is unreachable, events are buffered locally, cryptographically signed and chained, and verified before they are ever anchored — so tampering with the offline database is detected and blocked.
 
 ---
 
-# 🔎 Concept
+## Key Idea
 
-In Industry 5.0, machines must not only be connected — they must **trust** the humans interacting with them.
+The blockchain stores only integrity proofs (roots); raw events stay off-chain in a database. The risk is the window during a network outage, when data must be buffered locally and could be tampered with. Two mechanisms protect it:
 
-This system enables:
+- **Hash chaining (integrity)** — each block embeds the previous block's root, so any modification, deletion, or reordering breaks the chain.
+- **Ed25519 signatures (authenticity)** — each block is signed by the gateway. An attacker who edits the database cannot forge a valid signature without the private key.
 
-1. An operator holds a **digital identity (DID)**
-2. A skill credential is issued as a **Verifiable Credential**
-3. The operator presents it as a **Verifiable Presentation**
-4. The gateway verifies authenticity
-5. A policy decides ALLOW or DENY
-6. The decision is logged on-chain
-7. The IoT machine is unlocked or locked
+During an outage, blocks are staged on a **per-incident local chain** (an "epoch"). On recovery, each local chain is verified; only valid chains are merged into the main chain and anchored. Tampered chains are refused and quarantined, and never reach the blockchain.
+
+> For the full design, diagrams, and the research background, see the design report (`docs/`).
 
 ---
 
-# 🏗 Architecture Flow (High-Level)
-
-```mermaid
-flowchart LR
-  A[Operator DID] --> B[Create Verifiable Credential - role skill level]
-  B --> C[Store VC in Veramo Database]
-  C --> D[Create Verifiable Presentation]
-  D --> E[Gateway Verifies Presentation]
-  E --> F{Policy Check}
-  F -->|Granted| G[IoT Command Unlock]
-  F -->|Denied| H[IoT Command Lock]
-  F --> I[Blockchain Log AccessEvaluated Event]
+## Architecture Overview
 
 ```
+Audit event ──▶ SQLite (raw events, PENDING)
+                     │
+                     ▼
+              Batch + Merkle root
+                     │
+              live RPC ping ──── network UP ──▶ MAIN chain ──▶ signed ──▶ anchored on Sepolia
+                     │
+                network DOWN
+                     ▼
+        LOCAL chain (per incident, signed, quarantined)
+                     │
+              network restored
+                     ▼
+        verify local chain ── valid ──▶ re-chain + re-sign ──▶ MAIN chain ──▶ anchored
+                     │
+                  tampered ──▶ merge refused, flagged TAMPERED, never anchored
+```
 
-
-# ⚙️ Prerequisites
-
-- Node.js (LTS recommended)
-- npm
-- Configured Veramo agent (`agent.js`)
-- Sepolia RPC endpoint
-- Funded Sepolia wallet
-- Deployed `AccessLog` smart contract
+**Two-tier chains**
+- **MAIN chain** (`MerkleChain`) — verified blocks only; anchored on-chain.
+- **LOCAL chains** (`LocalChain`) — one independent chain per network incident (epoch); quarantine buffer during outages.
 
 ---
 
-------------------------------------------------------------------------
+## Tech Stack
 
-## Installation
+- **Backend:** Node.js (ES modules), Express 5
+- **Databases:** MongoDB (chains, incidents), SQLite (raw audit events)
+- **Blockchain:** Ethereum Sepolia testnet, `ethers.js`
+- **Smart contracts** (Foundry / Solidity, in `access-log/`): `AccessLog.sol`, `NetworkIncidentLog.sol`
+- **Crypto:** Ed25519 (Node built-in `crypto`)
 
-``` bash
-git clone <YOUR_REPO_URL>
-cd <YOUR_REPO_NAME>
+---
+
+## Prerequisites
+
+- Node.js 18+ (Node 22 recommended — the test script uses the built-in `fetch`)
+- A running MongoDB instance (local or Atlas)
+- A Sepolia RPC URL (e.g. Infura / Alchemy) and a funded Sepolia test account
+- The contracts deployed on Sepolia (see `access-log/`), or existing deployed addresses
+
+---
+
+## Setup
+
+### 1. Install dependencies
+
+```bash
+cd backend
 npm install
 ```
 
-------------------------------------------------------------------------
+### 2. Configure environment
 
-## Environment Configuration
+The backend reads its configuration from `backend/config/env.js` (git-ignored). Create it and export the following values:
 
-Create a `.env` file in the project root:
+```js
+// backend/config/env.js
+export const PORT = 5000;
+export const MONGO_URI = "mongodb://localhost:27017/aaa-industry5";
 
-    SEPOLIA_RPC=https://ethereum-sepolia-rpc.publicnode.com
-    PRIVATE_KEY=0xYOUR_PRIVATE_KEY
-    CONTRACT_ADDRESS=0xYOUR_DEPLOYED_CONTRACT
+// Sepolia
+export const RPC = "https://sepolia.infura.io/v3/<your-key>";
+export const PRIVATE_KEY = "<sepolia-account-private-key>";
 
-In your scripts, use:
-
-``` javascript
-const RPC = process.env.SEPOLIA_RPC
-const PRIVATE_KEY = process.env.PRIVATE_KEY
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS
+// Deployed contract addresses (Sepolia)
+export const CONTRACT_ADDRESS = "0x...";                    // AccessLog
+export const NETWORK_INCIDENT_CONTRACT_ADDRESS = "0x...";   // NetworkIncidentLog
 ```
 
-⚠️ Never commit private keys to GitHub.
+> **Never commit this file or any private key.** `env.js`, `*.pem`, `*.key`, and `*.sqlite` are already in `.gitignore`.
 
-------------------------------------------------------------------------
+### 3. Signing key
 
-## Smart Contract
+No manual step is needed. On first run the gateway generates an Ed25519 keypair in `backend/keys/` automatically. The `keys/` folder is git-ignored.
 
-Solidity contract: `AccessLog.sol`
+> **Security note:** in development the key lives on the same machine as the database. In production it must sit in a separate trust boundary (HSM / TPM / secure element). The whole tamper-detection guarantee depends on the signing key staying out of an attacker's reach.
 
-``` solidity
-// Emits AccessEvaluated(operatorDid, skill, skillLevel, granted, timestamp)
+---
+
+## Running
+
+Start MongoDB, then:
+
+```bash
+cd backend
+npm run dev      # nodemon (auto-reload)
+# or
+npm start        # node server.js
 ```
 
-Deploy to Sepolia using Remix, Hardhat, or Foundry.
+On startup the server connects to MongoDB and SQLite, starts the background sync worker (RPC heartbeat every ~10s), and listens on `PORT` (default 5000).
 
-------------------------------------------------------------------------
+---
 
-## Running the Project
+## API (relevant endpoints)
 
-### 1. Create and Store Credential
+Base URL: `http://localhost:5000`
 
-``` bash
-node create-credential.js
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/audit/event` | Create an audit event (`operatorDid`, `deviceDid`, `action`). Stored as `PENDING`. |
+| `GET`  | `/api/audit/pending` | List pending events. |
+| `GET`  | `/api/batch/create` | Batch pending events, build a signed block, route to MAIN (network up) or LOCAL (network down). |
+| `GET`  | `/api/batch/verify` | Verify the whole MAIN chain (signatures + continuity). |
+| `GET`  | `/api/batch/verify-local?incidentId=INC_xxx` | Verify one incident's LOCAL chain. |
+| `GET`  | `/api/batch/network-status` | Report the live RPC state (UP / DOWN). |
+
+Example — create an event:
+
+```bash
+curl -X POST http://localhost:5000/api/audit/event \
+  -H "Content-Type: application/json" \
+  -d '{"operatorDid":"did:ethr:sepolia:operator1","deviceDid":"did:ethr:sepolia:robot1","action":"WELD"}'
 ```
 
-### 2. Verify Credential
+---
 
-``` bash
-node verify-credential.js
+## How the flow works
+
+**Normal (network up)** — `POST /api/audit/event` a few times, then `GET /api/batch/create`. The block goes to the MAIN chain, is signed, and the worker anchors it on Sepolia (the `txHash` is stored on the block).
+
+**Incident, clean data** — with the RPC unreachable, `GET /api/batch/create` stages the block on the incident's LOCAL chain. When the network returns, the worker anchors the incident, verifies the local chain, re-chains + re-signs the blocks onto the MAIN chain, anchors them, saves the epoch root on the incident, and drops the local blocks.
+
+**Incident, tampered data** — if a local block is altered in the database, verification fails on recovery: the merge is refused, the offending `batchId` is reported, the block and incident are flagged `TAMPERED`, and nothing tampered is anchored.
+
+---
+
+## End-to-End Test
+
+An interactive script drives all three scenarios: it generates its own events, detects the real network state, waits for the worker, and prints Sepolia Etherscan links for anchored transactions.
+
+```bash
+cd backend
+node test-e2e.mjs
 ```
 
-Expected output:
+Choose `a` (all) and follow the prompts. The script pauses only when you need to toggle the RPC (break/fix the RPC in `env.js` and restart the server); it confirms the real network state before proceeding, so a scenario never runs against the wrong state.
 
-    verified: true
+Tip: clear the `merklechains` and `localchains` MongoDB collections before a clean demo run.
 
-### 3. Create and Verify Presentation
+---
 
-``` bash
-node create-presentation.js
+## Project Structure
+
+```
+.
+├── access-log/                 # Foundry project — Solidity contracts
+│   └── src/
+│       ├── AccessLog.sol
+│       └── NetworkIncidentLog.sol
+├── backend/
+│   ├── config/                 # env.js (git-ignored), mongodb.js
+│   ├── database/               # sqlite.js
+│   ├── models/                 # MerkleChain, LocalChain, NetworkIncident, Identity, DidState
+│   ├── services/
+│   │   ├── signingKey.service.js     # Ed25519 sign / verify
+│   │   ├── merkle.service.js         # Merkle root
+│   │   ├── merkleChain.service.js    # MAIN chain: create + verifyChain
+│   │   ├── localChain.service.js     # LOCAL chains: create / verify / merge / drop
+│   │   ├── networkIncident.service.js
+│   │   └── ...
+│   ├── routes/                 # audit, batch, identity, permit, authorization
+│   ├── workers/
+│   │   └── sync.worker.js      # RPC heartbeat, anchor, merge on recovery
+│   ├── blockchain/             # contract configs + on-chain calls
+│   ├── server.js
+│   ├── app.js
+│   └── test-e2e.mjs            # end-to-end scenario test
+└── docs/                       # design report + diagrams
 ```
 
-### 4. Gateway Authorization + Blockchain Logging
+---
 
-``` bash
-node gateway-policy.js
-```
+## Security Model (summary)
 
-Example Output:
+- **Detection is guaranteed** as long as the signing key is safe: any tampering breaks either the signature or the chain continuity, even if the attacker alters both the raw store and the chain block.
+- **Recovery** of tampered data is only possible from a clean source in a separate trust boundary; otherwise a tampered block is quarantined and kept as a forensic record.
+- **Single critical assumption:** the signing key must be protected (separate trust boundary). If the key is compromised, detection can be bypassed — this is the core limitation, documented deliberately. Already-anchored blocks remain safe regardless, since the blockchain ledger is immutable.
 
-    ACCESS GRANTED
-    UNLOCK_WELDING_ROBOT
-
-------------------------------------------------------------------------
-
-## Important Note
-
-Ensure you are extracting the real skill level:
-
-Correct:
-
-``` javascript
-const skillLevel = Number(cs.skillLevel);
-```
-
-Incorrect:
-
-``` javascript
-const skillLevel = Number(1);
-```
-
-------------------------------------------------------------------------
-
-## Scalability Considerations
-
-This is a Proof of Concept.
-
-For production deployment:
-
--   Run verification at an edge gateway
--   Make blockchain logging asynchronous
--   Add DID resolution caching
--   Scale gateway horizontally
--   Use Layer-2 or private blockchain networks
-
-------------------------------------------------------------------------
-
-## Smart Factory 5.0 Alignment
-
-This project demonstrates:
-
--   Human-centric access control
--   Decentralized trust
--   Blockchain transparency
--   Cyber-physical integration
--   Digital Twin identity layer
-
-------------------------------------------------------------------------
-
-## License
-
-MIT
+See the design report in `docs/` for the full threat model, the epoch-based rationale, the open decision on tampered-block handling, and references.
