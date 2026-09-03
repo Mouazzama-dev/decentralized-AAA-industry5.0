@@ -68,7 +68,11 @@ const LocalChainSchema = new mongoose.Schema({
             "PENDING_VERIFICATION",
             "VERIFIED",
             "TAMPERED",
-            "MERGED"
+            "MERGED",
+            // Admin reviewed, chose not to recover — kept as forensic record.
+            "DISCARDED",
+            // Admin explicitly acknowledged the tampering and accepted it.
+            "ACKNOWLEDGED"
         ],
         default:"PENDING_VERIFICATION"
     }

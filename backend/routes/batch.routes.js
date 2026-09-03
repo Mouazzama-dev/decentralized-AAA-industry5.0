@@ -18,7 +18,12 @@ import {
 
 import {
     createLocalChainedRoot,
-    verifyLocalChain
+    verifyLocalChain,
+    getTamperedLocalBlocks,
+    inspectLocalBlock,
+    recoverLocalBlock,
+    acknowledgeLocalBlock,
+    discardLocalBlock
 } from "../services/localChain.service.js";
 
 
@@ -328,6 +333,202 @@ router.get("/network-status", async(req,res)=>{
         networkUp ? "UP" : "DOWN"
 
     });
+
+});
+
+
+
+/*
+ * -----------------------------------------------------------------------
+ * Admin resolution endpoints — tampered local blocks
+ * -----------------------------------------------------------------------
+ * These routes are for human-in-the-loop resolution after tampering
+ * is detected on a local (offline) chain block.
+ *
+ * Typical flow:
+ *   GET  /tampered                        — see what needs a decision
+ *   GET  /local/:batchId/inspect          — compare DB vs SQLite (dry run)
+ *   POST /local/:batchId/recover          — fix it from SQLite
+ *     OR
+ *   POST /local/:batchId/acknowledge      — accept tampered as-is (forensic)
+ *     OR
+ *   POST /local/:batchId/discard          — permanently drop it (forensic)
+ * -----------------------------------------------------------------------
+ */
+
+
+
+/*
+ * Lists all local blocks awaiting admin resolution (status: TAMPERED).
+ * Sorted oldest-first so the admin can resolve them in chain order.
+ */
+router.get("/tampered", async (req, res) => {
+
+    try {
+
+        const blocks =
+            await getTamperedLocalBlocks();
+
+        res.json({
+            count:  blocks.length,
+            blocks
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            error: error.message
+        });
+
+    }
+
+});
+
+
+
+/*
+ * Shows the admin a side-by-side comparison of the tampered block
+ * (MongoDB) vs what it should be (rebuilt from SQLite).
+ *
+ * This is a read-only dry run — no data is changed.
+ * Use it before deciding whether to recover, acknowledge, or discard.
+ */
+router.get("/local/:batchId/inspect", async (req, res) => {
+
+    try {
+
+        const { batchId } = req.params;
+
+        const result =
+            await inspectLocalBlock(batchId);
+
+        res.json(result);
+
+    } catch (error) {
+
+        console.error(error);
+
+        const status =
+            error.message.includes("not TAMPERED") ||
+            error.message.includes("No local block") ? 400 : 500;
+
+        res.status(status).json({
+            error: error.message
+        });
+
+    }
+
+});
+
+
+
+/*
+ * Recovers a TAMPERED block by rebuilding it from SQLite.
+ *
+ * The block is re-chained + re-signed and reset to
+ * PENDING_VERIFICATION. The worker will verify and merge it into the
+ * main chain on the next cycle.
+ *
+ * Resolve blocks in chronological order — block N before block N+1.
+ */
+router.post("/local/:batchId/recover", async (req, res) => {
+
+    try {
+
+        const { batchId } = req.params;
+
+        const result =
+            await recoverLocalBlock(batchId);
+
+        res.json(result);
+
+    } catch (error) {
+
+        console.error(error);
+
+        const status =
+            error.message.includes("not TAMPERED") ||
+            error.message.includes("No local block") ? 400 : 500;
+
+        res.status(status).json({
+            error: error.message
+        });
+
+    }
+
+});
+
+
+
+/*
+ * Admin acknowledges the tampering and accepts the block as-is.
+ *
+ * Status -> ACKNOWLEDGED. The block is never anchored but is kept as
+ * a forensic record. Use when the admin has reviewed the tampered
+ * data and consciously chooses not to recover it.
+ */
+router.post("/local/:batchId/acknowledge", async (req, res) => {
+
+    try {
+
+        const { batchId } = req.params;
+
+        const result =
+            await acknowledgeLocalBlock(batchId);
+
+        res.json(result);
+
+    } catch (error) {
+
+        console.error(error);
+
+        const status =
+            error.message.includes("not TAMPERED") ||
+            error.message.includes("No local block") ? 400 : 500;
+
+        res.status(status).json({
+            error: error.message
+        });
+
+    }
+
+});
+
+
+
+/*
+ * Permanently discards a TAMPERED block.
+ *
+ * Status -> DISCARDED. The block is never anchored but is kept as a
+ * forensic record. Use when recovery is not possible (e.g. SQLite
+ * events also missing) or the admin decides not to anchor it.
+ */
+router.post("/local/:batchId/discard", async (req, res) => {
+
+    try {
+
+        const { batchId } = req.params;
+
+        const result =
+            await discardLocalBlock(batchId);
+
+        res.json(result);
+
+    } catch (error) {
+
+        console.error(error);
+
+        const status =
+            error.message.includes("not TAMPERED") ||
+            error.message.includes("No local block") ? 400 : 500;
+
+        res.status(status).json({
+            error: error.message
+        });
+
+    }
 
 });
 

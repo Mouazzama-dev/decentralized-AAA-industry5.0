@@ -33,13 +33,13 @@ Chaining alone is not enough (an attacker could recompute the whole chain); sign
 
 ---
 
-## 3. End-to-End Flow (all three conditions)
+## 3. End-to-End Flow (all five conditions)
 
-Every audit event is stored in SQLite as `PENDING`, then batched and reduced to a Merkle root. At batch time the system performs a **live RPC ping** to determine the real network state, and routes the block accordingly. The diagram below shows all three paths in one place.
+Every audit event is stored in SQLite as `PENDING`, then batched and reduced to a Merkle root. At batch time the system performs a **live RPC ping** to determine the real network state, and routes the block accordingly. The diagram below shows all paths — including the newly implemented admin resolution branch.
 
-![Full flow](diagrams/flow.png)
+![Full flow](../../docs/audit-chain-flow.png)
 
-*Figure 2 — Full flow: normal path, incident with clean data, and incident with tampered data.*
+*Figure 2 — Full flow: normal path, incident with clean data, incident with tampered data, and the two admin resolution outcomes (recover and acknowledge/discard).*
 
 ### 3.1 Scenario 1 — Normal (network up)
 
@@ -59,7 +59,7 @@ Every audit event is stored in SQLite as `PENDING`, then batched and reduced to 
 
 **Result:** data buffered during the outage is safely merged and anchored once integrity is confirmed.
 
-### 3.3 Scenario 3 — Incident, data TAMPERED
+### 3.3 Scenario 3 — Incident, data TAMPERED (detection)
 
 - The block is staged on the incident's LOCAL chain as above.
 - An attacker modifies the block in the database (e.g. changes `eventCount`).
@@ -68,6 +68,31 @@ Every audit event is stored in SQLite as `PENDING`, then batched and reduced to 
 - Other clean incidents still merge independently — a tampered epoch does not block healthy ones.
 
 > **Key result** — The tampered batch is **never anchored** on the blockchain. Tampering that would previously have gone unnoticed is now detected and quarantined before it can become permanent.
+
+### 3.4 Scenario 4 — Admin resolves: RECOVER
+
+This is the newly implemented human-in-the-loop path for the case where recovery from the trusted source is possible.
+
+- The admin calls `GET /api/batch/tampered` to list all blocks awaiting resolution.
+- The admin calls `GET /api/batch/local/:batchId/inspect` (dry-run, no side effects) to see a side-by-side comparison: what is stored in the tampered MongoDB block vs what the block *should* look like if rebuilt from the SQLite event store. The response includes `merkleRootMatch` (were the raw events also changed?) and `canRecover` (do SQLite events exist?).
+- The admin calls `POST /api/batch/local/:batchId/recover`. The system re-fetches the original events from SQLite, recomputes the Merkle root, re-chains the block onto the previous *active* block in the same incident, and re-signs it with the gateway's Ed25519 key. Status is reset to `PENDING_VERIFICATION`.
+- **Cascade re-chain:** any subsequent `PENDING_VERIFICATION` blocks in the same incident have a stale `previousRoot` because the recovered block's `currentRoot` changed. The recovery function automatically re-chains them in order, stopping at the next `TAMPERED` block so each tampered incident is resolved one decision at a time. No SQLite re-fetch is needed for the subsequent blocks — their Merkle roots are trusted (their signatures were valid; only the chain link needed fixing).
+- The sync worker, which now runs `mergeAllPendingLocalChains()` on **every** cycle (not just on incident close), picks up the recovered block within 10 seconds and merges it into the main chain without any manual trigger.
+
+> **Trust boundary note** — In this development setup, SQLite and MongoDB coexist on the same machine. If an attacker can write to MongoDB, they may also write to SQLite, limiting the trust separation. The recovery path is implemented for the production model where SQLite sits in a separate, write-protected trust boundary (e.g. an append-only audit store on isolated hardware). The inspect endpoint's `canRecover` flag makes this transparent.
+
+**Result:** the block is rebuilt from the trusted event store, re-integrated into the incident chain, and anchored on Sepolia — as if the tamper never happened, but with a clear audit trail of the resolution.
+
+### 3.5 Scenario 5 — Admin resolves: ACKNOWLEDGE or DISCARD
+
+When recovery is not possible (SQLite events also missing) or the admin decides not to recover:
+
+- **`POST /api/batch/local/:batchId/acknowledge`** — the admin explicitly accepts the tampered state. Status becomes `ACKNOWLEDGED`. The block is retained in the database as a permanent forensic record but is never anchored. This signals a deliberate, reviewed decision to leave the block as-is, distinguishable from blocks that were simply not yet reviewed.
+- **`POST /api/batch/local/:batchId/discard`** — the admin permanently drops the block from the anchoring pipeline. Status becomes `DISCARDED`. The block is retained as a forensic record. Use when recovery is not possible.
+
+Both outcomes are excluded from `verifyLocalChain` so they do not break chain continuity for the remaining active blocks in the same incident. The worker skips incidents with unresolved `TAMPERED` blocks (preventing premature flagging of subsequent blocks), and resumes merging once all tampered blocks have been resolved to one of these terminal states.
+
+**Result:** a clear, auditable admin decision is recorded. Nothing tampered or unresolved ever reaches the blockchain.
 
 ---
 
@@ -89,50 +114,56 @@ Consistent with the epoch model, once an incident's blocks are merged and anchor
 |---|---|
 | `signingKey.service.js` | Ed25519 keypair; sign / verify. Key stored locally for development (must move to a separate trust boundary in production). |
 | `merkleChain.service.js` | MAIN chain: create signed chained roots; `verifyChain` (signature + continuity). |
-| `localChain.service.js` | LOCAL chains: create per-incident signed blocks; verify per incident; merge (re-chain + re-sign) valid epochs; save root; drop merged blocks. |
-| `sync.worker.js` | RPC heartbeat; anchor incidents; merge all pending local chains on recovery; halt anchoring if any epoch is tampered. |
-| `batch.routes.js` | Live RPC ping routes blocks to MAIN or LOCAL; endpoints to verify main / verify a local epoch / report network status. |
+| `localChain.service.js` | LOCAL chains: create per-incident signed blocks; verify active blocks only (PENDING_VERIFICATION / VERIFIED); merge valid epochs; save root; drop merged blocks. Admin functions: `getTamperedLocalBlocks`, `inspectLocalBlock` (dry-run compare), `recoverLocalBlock` (rebuild from SQLite + cascade re-chain), `acknowledgeLocalBlock`, `discardLocalBlock`. |
+| `sync.worker.js` | RPC heartbeat; anchor incidents; **on every cycle when RPC is up**: merge all pending local chains from CLOSED incidents (not just on incident close, so admin-recovered blocks are picked up automatically). Halt anchoring if any epoch remains tampered. |
+| `batch.routes.js` | Live RPC ping routes blocks to MAIN or LOCAL; endpoints to verify main chain, verify a local epoch, report network status. Admin resolution endpoints: list tampered, inspect, recover, acknowledge, discard. |
+| `models/LocalChain.js` | Block status enum: `PENDING_VERIFICATION`, `VERIFIED`, `TAMPERED`, `MERGED`, `DISCARDED`, `ACKNOWLEDGED`. |
 
-**Verification status:** an end-to-end test drives all three scenarios (generating events, detecting the real network state, waiting for the worker, and printing Sepolia transaction links). All assertions pass — normal blocks anchor, clean incidents merge and anchor, and tampered blocks are detected, quarantined, and never anchored.
+**Verification status:** an end-to-end test drives all five scenarios (generating events, detecting the real network state, waiting for the worker, printing Sepolia transaction links). Scenarios 4 and 5 cover admin recovery (including cascade re-chain verification) and admin acknowledge. All assertions pass.
 
 ---
 
-## 6. Open Decision — What to Do with a Tampered Block
+## 6. Admin-Controlled Resolution — Implemented (Option 3)
 
-The current (development) behaviour is deliberately conservative: when tampering is detected, the whole incident's merge is refused (**all-or-nothing**) and the block is halted as `TAMPERED`. What should happen *next* is a policy decision, and the literature offers two well-supported directions. This section lays them out for discussion.
+The previous version of this document presented Options 1 and 2 as open choices. **Option 3 — human-in-the-loop admin resolution — has now been implemented.** It subsumes both earlier options: the admin examines each tampered block individually and chooses recover, acknowledge, or discard.
 
 ![Decision tree](diagrams/decision-tree.png)
 
-*Figure 4 — Decision tree for handling a tampered block, with literature backing for each option.*
+*Figure 4 — Decision tree for handling a tampered block. Option 3 (admin-controlled) is now implemented.*
 
 ### 6.1 Foundational point from the literature
 
-Across the secure-logging literature the paradigm is consistent: hash-chain logging is designed to make tampering **detectable**, not to self-repair it. The central goal is post-hoc detection, not prevention of all attacks (Schneier & Kelsey; Bellare & Yee, forward integrity; VCT, 2026). Recovery, where it exists, comes from an **external uncompromised source** — not from "fixing" the tampered copy.
+Across the secure-logging literature the paradigm is consistent: hash-chain logging is designed to make tampering **detectable**, not to self-repair it. The central goal is post-hoc detection, not prevention of all attacks (Schneier & Kelsey; Bellare & Yee, forward integrity; VCT, 2026). Recovery, where it exists, comes from an **external uncompromised source** — not from "fixing" the tampered copy. The admin resolution path follows this exactly: `/recover` rebuilds from SQLite (the external source), not from the tampered MongoDB value.
 
-### 6.2 Option 1 — Recover from a clean source
+### 6.2 The three resolution actions
 
-- If a clean copy of the raw data exists **in a separate trust boundary** (e.g. the SQLite event store, if isolated), recompute the Merkle root from that clean source, re-sign, set the block back to `PENDING_VERIFICATION`, and let it merge on the next cycle.
-- Recovery here means **discard-and-rebuild** from a trusted source — *not* editing the tampered value (we cannot know the original value once altered).
-- **Literature:** EngraveChain (2022) restores from uncompromised copies held by other parties; BlockAudit restores from backups after detection.
+| Action | Endpoint | Block status | Anchored? | When to use |
+|---|---|---|---|---|
+| **Recover** | `POST /local/:batchId/recover` | → `PENDING_VERIFICATION` | Yes, on next cycle | SQLite events intact; trust boundary justifies recovery |
+| **Acknowledge** | `POST /local/:batchId/acknowledge` | → `ACKNOWLEDGED` | Never | Admin reviewed and accepted tampered state; deliberate non-recovery |
+| **Discard** | `POST /local/:batchId/discard` | → `DISCARDED` | Never | SQLite also missing, or admin decides not to anchor |
 
-> **Caveat** — The clean source is only trustworthy if it sits in a *different* trust boundary from the tampered store. If both share one boundary (as in the current single-machine dev setup), an attacker could alter both, and only detection — not recovery — remains valid.
+Both `ACKNOWLEDGED` and `DISCARDED` are permanent forensic statuses — the block is retained in the database as an audit record but excluded from all future verification and merge operations.
 
-### 6.3 Option 2 — Discard and flag (forensic)
+### 6.3 Trade-offs (updated)
 
-- Keep the block permanently as `TAMPERED`, never anchor it, and retain a forensic record that tampering occurred at this incident/batch.
-- This is the most honest option when no trusted clean copy exists: the system records "this was tampered" without guessing the original value.
-- **Literature:** detection is guaranteed, recovery is not; retaining forensic evidence and localizing the offending epoch/sub-epoch is standard (Accountability of Things, 2023). That work also warns that an attacker may introduce *multiple* alterations to obscure the real one — which argues for conservative, all-or-nothing handling.
+| Aspect | Recover | Acknowledge | Discard |
+|---|---|---|---|
+| **Availability** | Highest — batch anchored | Lowest — batch lost | Lowest — batch lost |
+| **Trust requirement** | SQLite in a separate trust boundary | None | None |
+| **Forensic record** | Block rebuilt and anchored | Block retained as ACKNOWLEDGED | Block retained as DISCARDED |
+| **Admin signal** | "Data was good; MongoDB was attacked" | "I reviewed this; leaving it" | "Recovery not possible" |
 
-### 6.4 Trade-off and recommendation for discussion
+### 6.4 Cascade re-chain and ordered resolution
 
-| Aspect | Option 1 — Recover | Option 2 — Discard + flag |
-|---|---|---|
-| **Availability** | Higher — data recovered and anchored | Lower — affected batch never anchored |
-| **Trust requirement** | Needs a clean source in a separate boundary | None beyond detection |
-| **Risk** | Wrong if the "clean" source is also compromised | Conservative; safest forensically |
-| **Complexity** | Higher (recompute + re-sign pipeline) | Low (already largely implemented) |
+When a tampered block B is recovered, its `currentRoot` changes. Any `PENDING_VERIFICATION` blocks created after B in the same incident reference B's old root, breaking their chain. The `recoverLocalBlock` function automatically **cascades** the re-chain through subsequent PENDING blocks, stopping at the next TAMPERED block. This means:
 
-**Proposed direction (for review):** keep all-or-nothing **discard + flag** as the default (Option 2) and justify it via the detect-then-restore-from-clean-source model; treat **recover-from-clean-source** (Option 1) as a next step *conditioned on isolating the raw-event store in a separate trust boundary*. **Partial merge** (recovering clean blocks before the corruption point) is a further optimization for future work, tempered by the multi-alteration obfuscation risk.
+- The admin resolves blocks in chronological order (oldest first — the order returned by `GET /tampered`).
+- Recovering B automatically fixes C, D, E if they are PENDING.
+- If D is also TAMPERED, cascade stops at D; admin resolves D next.
+- DISCARDED / ACKNOWLEDGED blocks are jumped over in the cascade (they are excluded from the active chain).
+
+This design ensures each tampered block gets its own explicit admin decision, while minimising manual re-chaining work for clean blocks caught in the chain break.
 
 ---
 

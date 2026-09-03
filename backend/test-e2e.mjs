@@ -4,11 +4,16 @@
  * ---------------------------------------------------------------
  *
  * Scenarios:
- *   1. NORMAL              - network up, block -> main chain, anchored.
- *   2. INCIDENT + CLEAN    - network down, block -> local chain,
- *                            merged + anchored on recovery.
- *   3. INCIDENT + TAMPERED - network down, local block tampered,
- *                            merge refused on recovery.
+ *   1. NORMAL                  - network up, block -> main chain, anchored.
+ *   2. INCIDENT + CLEAN        - network down, block -> local chain,
+ *                                merged + anchored on recovery.
+ *   3. INCIDENT + TAMPERED     - network down, local block tampered,
+ *                                merge refused on recovery.
+ *   4. ADMIN RECOVER           - tampered block inspected + recovered
+ *                                from SQLite; cascade re-chains subsequent
+ *                                blocks; worker auto-merges + anchors.
+ *   5. ADMIN ACKNOWLEDGE       - tampered block acknowledged by admin;
+ *                                stays as forensic record, never anchored.
  *
  * This script:
  *   - generates its own audit events,
@@ -130,6 +135,42 @@ const verifyMain = async () => {
 const verifyLocal = async (incidentId) => {
     const res = await fetch(
         `${API}/verify-local?incidentId=${encodeURIComponent(incidentId)}`
+    );
+    return { status: res.status, body: await res.json() };
+};
+
+const getTampered = async () => {
+    const res = await fetch(`${API}/tampered`);
+    return { status: res.status, body: await res.json() };
+};
+
+const inspectBlock = async (batchId) => {
+    const res = await fetch(
+        `${API}/local/${encodeURIComponent(batchId)}/inspect`
+    );
+    return { status: res.status, body: await res.json() };
+};
+
+const recoverBlock = async (batchId) => {
+    const res = await fetch(
+        `${API}/local/${encodeURIComponent(batchId)}/recover`,
+        { method: "POST" }
+    );
+    return { status: res.status, body: await res.json() };
+};
+
+const acknowledgeBlock = async (batchId) => {
+    const res = await fetch(
+        `${API}/local/${encodeURIComponent(batchId)}/acknowledge`,
+        { method: "POST" }
+    );
+    return { status: res.status, body: await res.json() };
+};
+
+const discardBlock = async (batchId) => {
+    const res = await fetch(
+        `${API}/local/${encodeURIComponent(batchId)}/discard`,
+        { method: "POST" }
     );
     return { status: res.status, body: await res.json() };
 };
@@ -429,6 +470,278 @@ const scenarioIncidentTampered = async () => {
 };
 
 
+const scenarioAdminRecover = async () => {
+
+    console.log("\n\n=====================================================");
+    console.log(" SCENARIO 4 - INCIDENT + TAMPERED + ADMIN RECOVER");
+    console.log("=====================================================");
+    console.log(" Expectation: admin inspects the tampered block, recovers");
+    console.log(" it from SQLite. Subsequent blocks are auto-cascade re-chained.");
+    console.log(" Worker auto-merges the recovered blocks into the main chain.");
+
+    await ensureNetwork(false);
+
+    // ---- (1) Create TWO batches during outage so we can see cascade ----
+    await step("(1) Generating events for BATCH A (network down)...");
+    await generateEvents(EVENTS_PER_BATCH);
+
+    await step("(2) Creating BATCH A (goes to LOCAL chain)...");
+    const resA = await createBatch();
+    if (resA.body.message === "No pending events") {
+        fail("No pending events for batch A.");
+        return;
+    }
+    const batchIdA  = resA.body.batchId;
+    const incidentId = resA.body.incidentId;
+    info(`batchIdA   = ${batchIdA}`);
+    info(`incidentId = ${incidentId}`);
+    assert(resA.body.chain === "LOCAL", "Batch A routed to LOCAL chain");
+
+    await step("(3) Generating events for BATCH B (still network down)...");
+    await generateEvents(EVENTS_PER_BATCH);
+
+    await step("(4) Creating BATCH B (chained after A on LOCAL chain)...");
+    const resB = await createBatch();
+    if (resB.body.message === "No pending events") {
+        fail("No pending events for batch B.");
+        return;
+    }
+    const batchIdB = resB.body.batchId;
+    info(`batchIdB   = ${batchIdB}`);
+    assert(resB.body.chain === "LOCAL", "Batch B routed to LOCAL chain");
+    assert(resB.body.incidentId === incidentId, "Batch B scoped to same incident");
+
+
+    // ---- (2) Tamper BATCH A only ----
+    await step("(5) Simulating ATTACKER tampering BATCH A...");
+    const blockA = await LocalChain.findOne({ batchId: batchIdA });
+    if (!blockA) { fail("Could not find local block A."); return; }
+
+    const origCount = blockA.eventCount;
+    await LocalChain.updateOne(
+        { batchId: batchIdA },
+        { $set: { eventCount: origCount + 99 } }
+    );
+    info(`Tampered eventCount ${origCount} -> ${origCount + 99} on ${batchIdA}`);
+    info("NOTE: Batch B is untouched — its chain root will break after A is tampered.");
+    info("      The cascade in recoverBlock will fix B automatically.");
+
+
+    // ---- (3) Confirm tamper detection ----
+    await step("(6) Verifying local chain (should FAIL for batch A)...");
+    const vLocal = await verifyLocal(incidentId);
+    info(`Local chain valid = ${vLocal.body.valid}`);
+    assert(vLocal.body.valid === false, "Tampering detected by verifyLocalChain");
+
+    await ensureNetwork(true);
+    info("Worker will close the incident and flag batch A as TAMPERED.");
+
+    await step("(7) Waiting for batch A to be flagged TAMPERED by the worker...");
+    const flagged = await waitFor(
+        "TAMPERED flag on batch A",
+        async () => {
+            const b = await LocalChain.findOne({ batchId: batchIdA });
+            return (b && b.status === "TAMPERED") ? b : null;
+        }
+    );
+    assert(!!flagged, "Batch A flagged status=TAMPERED");
+
+
+    // ---- (4) Admin lists tampered blocks ----
+    await step("(8) Admin: GET /tampered — listing all TAMPERED blocks...");
+    const { body: tamperedList } = await getTampered();
+    info(`TAMPERED blocks found = ${tamperedList.count}`);
+    assert(
+        tamperedList.blocks.some(b => b.batchId === batchIdA),
+        "Batch A appears in /tampered list"
+    );
+
+
+    // ---- (5) Admin inspects the block (dry run compare) ----
+    await step("(9) Admin: GET /local/:batchId/inspect — dry run comparison...");
+    const { body: inspection } = await inspectBlock(batchIdA);
+    info(`stored.eventCount    = ${inspection.stored?.eventCount}`);
+    info(`recomputed.eventCount = ${inspection.recomputed?.eventCount}`);
+    info(`merkleRootMatch       = ${inspection.tamperAnalysis?.merkleRootMatch}`);
+    info(`canRecover            = ${inspection.tamperAnalysis?.canRecover}`);
+    assert(
+        inspection.status === "TAMPERED",
+        "Inspect confirms block status is TAMPERED"
+    );
+    assert(
+        inspection.tamperAnalysis?.canRecover === true,
+        "SQLite events are intact — recovery is possible"
+    );
+    assert(
+        inspection.stored?.eventCount !== inspection.recomputed?.eventCount,
+        "Inspect shows stored eventCount differs from SQLite recomputed"
+    );
+    info("   KEY: merkleRootMatch tells admin if raw events were changed.");
+    info("   KEY: canRecover=true means SQLite has the original events.");
+
+
+    // ---- (6) Admin recovers batch A ----
+    await step("(10) Admin: POST /local/:batchId/recover — rebuilding from SQLite...");
+    const { status: recoverStatus, body: recoverBody } = await recoverBlock(batchIdA);
+    info(`HTTP status        = ${recoverStatus}`);
+    info(`recovered          = ${recoverBody.recovered}`);
+    info(`newCurrentRoot     = ${recoverBody.newCurrentRoot}`);
+    info(`cascadeRechained   = ${JSON.stringify(recoverBody.cascadeRechained)}`);
+    assert(recoverStatus === 200, "Recover endpoint returns 200");
+    assert(recoverBody.recovered === true, "Batch A recovered successfully");
+    assert(
+        Array.isArray(recoverBody.cascadeRechained) &&
+        recoverBody.cascadeRechained.includes(batchIdB),
+        "Cascade automatically re-chained batch B after A's root changed"
+    );
+
+
+    // ---- (7) Confirm DB state after recovery ----
+    await step("(11) Confirming DB state after recovery...");
+    const recoveredA = await LocalChain.findOne({ batchId: batchIdA });
+    const reChainedB = await LocalChain.findOne({ batchId: batchIdB });
+    assert(
+        recoveredA && recoveredA.status === "PENDING_VERIFICATION",
+        "Batch A reset to PENDING_VERIFICATION"
+    );
+    assert(
+        reChainedB && reChainedB.previousRoot === recoveredA.currentRoot,
+        "Batch B previousRoot now matches recovered A's currentRoot (cascade worked)"
+    );
+    info(`   A.currentRoot = ${recoveredA?.currentRoot}`);
+    info(`   B.previousRoot = ${reChainedB?.previousRoot}`);
+
+
+    // ---- (8) Worker auto-merges ----
+    await step("(12) Waiting for worker to auto-merge recovered blocks...");
+    info("Worker runs every 10s and picks up PENDING_VERIFICATION blocks from CLOSED incidents.");
+    const mergedA = await waitFor(
+        "batch A in main chain",
+        async () => {
+            const b = await MerkleChain.findOne({ batchId: batchIdA });
+            return (b && b.txHash) ? b : null;
+        }
+    );
+    assert(!!mergedA, "Recovered batch A merged + anchored on-chain");
+    if (mergedA) showTxLink(`Recovered batch A`, mergedA.txHash);
+
+    const mergedB = await waitFor(
+        "batch B in main chain",
+        async () => {
+            const b = await MerkleChain.findOne({ batchId: batchIdB });
+            return (b && b.txHash) ? b : null;
+        }
+    );
+    assert(!!mergedB, "Cascade-rechained batch B also merged + anchored on-chain");
+    if (mergedB) showTxLink(`Cascade batch B`, mergedB.txHash);
+
+
+    // ---- (9) Final chain integrity check ----
+    await step("(13) Final main chain verification...");
+    const vmFinal = await verifyMain();
+    info(`Main chain: valid=${vmFinal.body.valid}, blocks=${vmFinal.body.totalBlocks}`);
+    assert(vmFinal.body.valid === true, "Main chain still intact after admin recovery");
+
+    await ask("Scenario 4 done. Press ENTER to continue...");
+
+};
+
+
+
+const scenarioAdminAcknowledge = async () => {
+
+    console.log("\n\n=====================================================");
+    console.log(" SCENARIO 5 - INCIDENT + TAMPERED + ADMIN ACKNOWLEDGE");
+    console.log("=====================================================");
+    console.log(" Expectation: admin acknowledges the tampered block.");
+    console.log(" Block stays as ACKNOWLEDGED forensic record — never anchored.");
+    console.log(" Main chain remains valid.");
+
+    await ensureNetwork(false);
+
+    await step("(1) Generating audit events (network down)...");
+    await generateEvents(EVENTS_PER_BATCH);
+
+    await step("(2) Creating a batch (LOCAL chain)...");
+    const { body } = await createBatch();
+    if (body.message === "No pending events") {
+        fail("No pending events.");
+        return;
+    }
+    const batchId   = body.batchId;
+    const incidentId = body.incidentId;
+    info(`batchId    = ${batchId}`);
+    info(`incidentId = ${incidentId}`);
+    assert(body.chain === "LOCAL", "Block routed to LOCAL chain");
+
+
+    await step("(3) Simulating ATTACKER tampering the block...");
+    const block = await LocalChain.findOne({ batchId });
+    if (!block) { fail("Could not find local block."); return; }
+    const orig = block.eventCount;
+    await LocalChain.updateOne(
+        { batchId },
+        { $set: { eventCount: orig + 99 } }
+    );
+    info(`Tampered eventCount ${orig} -> ${orig + 99}`);
+
+    await ensureNetwork(true);
+    info("Worker will close the incident and flag the block TAMPERED.");
+
+    await step("(4) Waiting for block to be flagged TAMPERED...");
+    const flagged = await waitFor(
+        "TAMPERED flag",
+        async () => {
+            const b = await LocalChain.findOne({ batchId });
+            return (b && b.status === "TAMPERED") ? b : null;
+        }
+    );
+    assert(!!flagged, "Block flagged status=TAMPERED by worker");
+
+
+    await step("(5) Admin: GET /tampered — confirms block is listed...");
+    const { body: tamperedList } = await getTampered();
+    assert(
+        tamperedList.blocks.some(b => b.batchId === batchId),
+        "Block appears in /tampered list"
+    );
+
+
+    await step("(6) Admin: POST /local/:batchId/acknowledge — accepting tampered state...");
+    const { status: ackStatus, body: ackBody } = await acknowledgeBlock(batchId);
+    info(`HTTP status  = ${ackStatus}`);
+    info(`acknowledged = ${ackBody.acknowledged}`);
+    info(`status       = ${ackBody.status}`);
+    assert(ackStatus === 200, "Acknowledge endpoint returns 200");
+    assert(ackBody.acknowledged === true, "Block acknowledged successfully");
+    assert(ackBody.status === "ACKNOWLEDGED", "Block status set to ACKNOWLEDGED");
+
+
+    await step("(7) Confirming ACKNOWLEDGED block is never merged...");
+    // Wait 2 full worker cycles and confirm block did NOT reach MerkleChain
+    await sleep(25000);
+    const inMain = await MerkleChain.findOne({ batchId });
+    assert(!inMain, "ACKNOWLEDGED block NOT present in main chain");
+
+    const ackBlock = await LocalChain.findOne({ batchId });
+    assert(
+        ackBlock && ackBlock.status === "ACKNOWLEDGED",
+        "Block retained as ACKNOWLEDGED forensic record in LocalChain"
+    );
+    info("   KEY: Block is preserved in LocalChain as a forensic record.");
+    info("   KEY: It will never be anchored on-chain.");
+
+
+    await step("(8) Final main chain verification...");
+    const vmFinal = await verifyMain();
+    info(`Main chain: valid=${vmFinal.body.valid}, blocks=${vmFinal.body.totalBlocks}`);
+    assert(vmFinal.body.valid === true, "Main chain intact — acknowledged block had no effect");
+
+    await ask("Scenario 5 done. Press ENTER to continue...");
+
+};
+
+
 // ---- runner --------------------------------------------------------
 
 const main = async () => {
@@ -441,18 +754,27 @@ const main = async () => {
     console.log("waits for the worker, and prints Sepolia Etherscan links.");
     console.log(`Target server: ${BASE_URL}`);
 
-    const which = await ask(
-        "Run which? [a]ll / [1] normal / [2] incident-clean / [3] incident-tampered:"
-    );
+    console.log("  [1] normal            — network up, main chain");
+    console.log("  [2] incident-clean    — outage, clean merge");
+    console.log("  [3] incident-tampered — outage, tamper detected, merge refused");
+    console.log("  [4] admin-recover     — tamper + admin recovers from SQLite + cascade");
+    console.log("  [5] admin-acknowledge — tamper + admin acknowledges (forensic only)");
+    console.log("  [a] all               — run all scenarios in order");
+
+    const which = await ask("Run which? [a/1/2/3/4/5]:");
 
     try {
         if (which === "1") await scenarioNormal();
         else if (which === "2") await scenarioIncidentClean();
         else if (which === "3") await scenarioIncidentTampered();
+        else if (which === "4") await scenarioAdminRecover();
+        else if (which === "5") await scenarioAdminAcknowledge();
         else {
             await scenarioNormal();
             await scenarioIncidentClean();
             await scenarioIncidentTampered();
+            await scenarioAdminRecover();
+            await scenarioAdminAcknowledge();
         }
     } catch (err) {
         console.error("\nTest run error:", err.message);
