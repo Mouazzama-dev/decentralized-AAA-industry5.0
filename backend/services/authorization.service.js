@@ -26,10 +26,10 @@ const checkAuthorization = async ({
 
 
 
-    // Step 2: Check credential data
+    // Step 2: Check credential data (use decoded output — works for both JWT string and object input)
 
     const subject =
-        credential.credentialSubject;
+        verification.verifiableCredential?.credentialSubject;
 
 
 

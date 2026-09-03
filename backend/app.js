@@ -7,6 +7,7 @@ import permitRoutes from "./routes/permit.routes.js";
 import authorizationRoutes from "./routes/authorization.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
 import batchRoutes from "./routes/batch.routes.js";
+import actionRoutes from "./routes/action.routes.js";
 
 
 
@@ -52,4 +53,11 @@ app.use(
     "/api/batch",
     batchRoutes
 );
+
+// Combined action endpoint: authorization check → audit event (the full AAA chain)
+app.use(
+    "/api/action",
+    actionRoutes
+);
+
 export default app;
