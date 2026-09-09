@@ -1,5 +1,6 @@
 import express from "express";
 import { performAction } from "../services/action.service.js";
+import { getDB } from "../database/sqlite.js";
 
 const router = express.Router();
 
@@ -42,6 +43,24 @@ router.post("/perform", async (req, res) => {
 
         res.json(result);
 
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/*
+ * GET /api/action/denied
+ *
+ * Returns the full denied-access log from SQLite.
+ * Useful for security audits — shows every blocked attempt with reason.
+ */
+router.get("/denied", async (req, res) => {
+    try {
+        const db = getDB();
+        const rows = await db.all(
+            `SELECT * FROM denied_events ORDER BY id DESC`
+        );
+        res.json({ count: rows.length, denied: rows });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

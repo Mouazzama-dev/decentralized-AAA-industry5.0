@@ -14,6 +14,12 @@
  *                                blocks; worker auto-merges + anchors.
  *   5. ADMIN ACKNOWLEDGE       - tampered block acknowledged by admin;
  *                                stays as forensic record, never anchored.
+ *   6. FULL AAA FLOW           - register operator + machine DIDs, approve
+ *                                both, issue VC permit, perform an authorized
+ *                                action (creates audit event -> batch ->
+ *                                anchored), then test denied access (wrong
+ *                                action, unknown machine) and verify denied
+ *                                events are logged in SQLite.
  *
  * This script:
  *   - generates its own audit events,
@@ -42,8 +48,11 @@ import NetworkIncident from "./models/NetworkIncident.js";
 const BASE_URL =
     process.env.TEST_BASE_URL || "http://localhost:5000";
 
-const API = `${BASE_URL}/api/batch`;
-const AUDIT_API = `${BASE_URL}/api/audit`;
+const API        = `${BASE_URL}/api/batch`;
+const AUDIT_API  = `${BASE_URL}/api/audit`;
+const IDENTITY_API = `${BASE_URL}/api/identity`;
+const PERMIT_API   = `${BASE_URL}/api/permit`;
+const ACTION_API   = `${BASE_URL}/api/action`;
 
 // Sepolia block explorer
 const EXPLORER_TX = "https://sepolia.etherscan.io/tx/";
@@ -241,6 +250,50 @@ const showTxLink = (label, txHash) => {
     if (txHash) {
         link(`${label} TX: ${EXPLORER_TX}${txHash}`);
     }
+};
+
+
+// ---- AAA API helpers -----------------------------------------------
+
+const registerIdentity = async ({ alias, type, allowedActions = [] }) => {
+    const res = await fetch(`${IDENTITY_API}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alias, type, allowedActions })
+    });
+    return res.json();
+};
+
+const approveIdentity = async (did) => {
+    const res = await fetch(`${IDENTITY_API}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ did })
+    });
+    return res.json();
+};
+
+const issuePerm = async ({ issuerDid, holderDid, machineDid, actions }) => {
+    const res = await fetch(`${PERMIT_API}/issue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issuerDid, holderDid, machineDid, actions })
+    });
+    return res.json();
+};
+
+const performAction = async ({ credential, operatorDid, machineDid, action }) => {
+    const res = await fetch(`${ACTION_API}/perform`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential, operatorDid, machineDid, action })
+    });
+    return { status: res.status, body: await res.json() };
+};
+
+const getDenied = async () => {
+    const res = await fetch(`${ACTION_API}/denied`);
+    return res.json();
 };
 
 
@@ -742,6 +795,189 @@ const scenarioAdminAcknowledge = async () => {
 };
 
 
+const scenarioFullAAA = async () => {
+
+    console.log("\n\n=====================================================");
+    console.log(" SCENARIO 6 - FULL AAA FLOW");
+    console.log("=====================================================");
+    console.log(" Register DIDs → approve → issue VC permit →");
+    console.log(" authorized action (audit event → batch → anchored) →");
+    console.log(" denied actions (wrong action, unknown machine) →");
+    console.log(" verify denied log in SQLite.");
+
+    await ensureNetwork(true);
+
+    // ---- (1) Register identities ----
+    await step("(1) Registering admin, operator, and machine DIDs...");
+
+    const ts = Date.now();
+    const adminAlias    = `e2e-admin-${ts}`;
+    const operatorAlias = `e2e-operator-${ts}`;
+    const machineAlias  = `e2e-machine-${ts}`;
+
+    const adminReg = await registerIdentity({ alias: adminAlias, type: "operator" });
+    info(`admin DID    = ${adminReg.did}`);
+    assert(!!adminReg.did, "Admin DID created");
+
+    const opReg = await registerIdentity({ alias: operatorAlias, type: "operator" });
+    info(`operator DID = ${opReg.did}`);
+    assert(!!opReg.did, "Operator DID created");
+
+    const machReg = await registerIdentity({
+        alias: machineAlias,
+        type: "machine",
+        allowedActions: ["WELD", "CUT"]
+    });
+    info(`machine DID  = ${machReg.did}`);
+    assert(!!machReg.did, "Machine DID created");
+
+    const adminDid    = adminReg.did;
+    const operatorDid = opReg.did;
+    const machineDid  = machReg.did;
+
+
+    // ---- (2) Approve operator and machine ----
+    await step("(2) Admin approves operator and machine identities...");
+
+    const approveOp   = await approveIdentity(operatorDid);
+    const approveMach = await approveIdentity(machineDid);
+    assert(approveOp.success === true, "Operator identity approved (ACTIVE)");
+    assert(approveMach.success === true, "Machine identity approved (ACTIVE)");
+    info("   Show MongoDB: IdentityStore -> operators + machines arrays");
+
+
+    // ---- (3) Issue VC permit ----
+    await step("(3) Admin issues VC permit: operator can WELD on this machine...");
+
+    const permitRes = await issuePerm({
+        issuerDid:  adminDid,
+        holderDid:  operatorDid,
+        machineDid: machineDid,
+        actions:    ["WELD", "CUT"]
+    });
+    assert(permitRes.success === true, "Permit issued successfully");
+    assert(!!permitRes.credential, "Permit response contains a credential");
+    const credential = permitRes.credential;
+    info(`VC proof format: ${credential?.proof?.type || "jwt"}`);
+    info("   This JWT credential is what the operator carries to every action.");
+
+
+    // ---- (4) Authorized action ----
+    await step("(4) Operator performs an authorized action: WELD...");
+
+    const authRes = await performAction({
+        credential,
+        operatorDid,
+        machineDid,
+        action: "WELD"
+    });
+    info(`HTTP status  = ${authRes.status}`);
+    info(`authorized   = ${authRes.body.authorized}`);
+    info(`auditEventId = ${authRes.body.auditEventId}`);
+    info(`timestamp    = ${authRes.body.timestamp}`);
+    assert(authRes.status === 200, "Perform action returns 200");
+    assert(authRes.body.authorized === true, "Action authorized");
+    assert(
+        typeof authRes.body.auditEventId === "number",
+        "Audit event ID returned (event written to SQLite)"
+    );
+    info("   KEY: authorized action creates an audit event in SQLite,");
+    info("   which the batch worker will include in the next Merkle block.");
+
+
+    // ---- (5) Wait for worker to batch + anchor ----
+    await step("(5) Waiting for the audit event to be batched and anchored...");
+    info("Worker cycles every 10s — event -> batch -> MerkleChain -> Sepolia.");
+
+    const auditEventId = authRes.body.auditEventId;
+    const anchored = await waitFor(
+        "batch anchored (event batched + TX confirmed)",
+        async () => {
+            const res = await fetch(`${AUDIT_API}/pending`);
+            const events = await res.json(); // returns array directly
+            // event no longer pending means it was batched
+            const stillPending = events.some(e => e.id === auditEventId);
+            if (stillPending) return null;
+            // find its batch in MerkleChain
+            const { getDB } = await import("./database/sqlite.js");
+            const db = getDB();
+            const ev = await db.get(
+                `SELECT * FROM events WHERE id = ?`, [auditEventId]
+            );
+            if (!ev || !ev.batchId) return null;
+            const block = await MerkleChain.findOne({ batchId: ev.batchId });
+            return (block && block.txHash) ? { block, ev } : null;
+        }
+    );
+    if (anchored) {
+        assert(true, "Audit event batched and anchored on Sepolia");
+        info(`batchId  = ${anchored.ev.batchId}`);
+        showTxLink("AAA audit batch", anchored.block.txHash);
+    } else {
+        assert(false, "Audit event batched and anchored on Sepolia (timed out)");
+    }
+
+
+    // ---- (6) Denied: wrong action (not in VC) ----
+    await step("(6) Operator tries a DENIED action: MOVE_UP (not in their permit)...");
+
+    const deniedBefore = await getDenied();
+    const deniedCountBefore = deniedBefore.count;
+
+    const denyAction = await performAction({
+        credential,
+        operatorDid,
+        machineDid,
+        action: "MOVE_UP"
+    });
+    info(`authorized = ${denyAction.body.authorized}`);
+    info(`reason     = ${denyAction.body.reason}`);
+    assert(denyAction.body.authorized === false, "MOVE_UP correctly denied");
+    assert(
+        denyAction.body.reason === "Action not permitted",
+        "Deny reason: Action not permitted"
+    );
+    assert(denyAction.body.auditEventId === null, "No audit event created for denied action");
+
+
+    // ---- (7) Denied: unregistered machine ----
+    await step("(7) Operator tries action on an UNREGISTERED machine...");
+
+    const fakeMachine = "did:ethr:sepolia:0x0000000000000000000000000000000000000000";
+    const denyMachine = await performAction({
+        credential,
+        operatorDid,
+        machineDid: fakeMachine,
+        action: "WELD"
+    });
+    info(`authorized = ${denyMachine.body.authorized}`);
+    info(`reason     = ${denyMachine.body.reason}`);
+    assert(denyMachine.body.authorized === false, "Unregistered machine correctly denied");
+    assert(
+        denyMachine.body.reason.includes("Machine DID"),
+        "Deny reason mentions machine DID"
+    );
+
+
+    // ---- (8) Check denied log ----
+    await step("(8) Verifying both denials are logged in SQLite denied_events...");
+
+    const deniedAfter = await getDenied();
+    info(`Total denied events in log = ${deniedAfter.count}`);
+    assert(
+        deniedAfter.count >= deniedCountBefore + 2,
+        "Both denied attempts recorded in denied_events table"
+    );
+    const last2 = deniedAfter.denied.slice(0, 2);
+    info(`Latest denied: action=${last2[0]?.action}, reason=${last2[0]?.reason}`);
+    info(`               action=${last2[1]?.action}, reason=${last2[1]?.reason}`);
+    info("   KEY: failed access attempts are in SQLite, not the blockchain.");
+    info("   KEY: successful actions are the only ones anchored on-chain.");
+
+    await ask("Scenario 6 done. Press ENTER to continue...");
+};
+
+
 // ---- runner --------------------------------------------------------
 
 const main = async () => {
@@ -759,9 +995,10 @@ const main = async () => {
     console.log("  [3] incident-tampered — outage, tamper detected, merge refused");
     console.log("  [4] admin-recover     — tamper + admin recovers from SQLite + cascade");
     console.log("  [5] admin-acknowledge — tamper + admin acknowledges (forensic only)");
+    console.log("  [6] full-aaa          — DID register + approve + VC permit + action + denied log");
     console.log("  [a] all               — run all scenarios in order");
 
-    const which = await ask("Run which? [a/1/2/3/4/5]:");
+    const which = await ask("Run which? [a/1/2/3/4/5/6]:");
 
     try {
         if (which === "1") await scenarioNormal();
@@ -769,12 +1006,14 @@ const main = async () => {
         else if (which === "3") await scenarioIncidentTampered();
         else if (which === "4") await scenarioAdminRecover();
         else if (which === "5") await scenarioAdminAcknowledge();
+        else if (which === "6") await scenarioFullAAA();
         else {
             await scenarioNormal();
             await scenarioIncidentClean();
             await scenarioIncidentTampered();
             await scenarioAdminRecover();
             await scenarioAdminAcknowledge();
+            await scenarioFullAAA();
         }
     } catch (err) {
         console.error("\nTest run error:", err.message);

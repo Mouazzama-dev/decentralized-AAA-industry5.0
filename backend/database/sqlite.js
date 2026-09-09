@@ -48,6 +48,26 @@ const connectSQLite = async()=>{
 
     `);
 
+    await db.exec(`
+
+        CREATE TABLE IF NOT EXISTS denied_events (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            operatorDid TEXT,
+
+            machineDid TEXT,
+
+            action TEXT,
+
+            reason TEXT,
+
+            timestamp TEXT
+
+        )
+
+    `);
+
 
     return db;
 

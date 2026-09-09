@@ -1,0 +1,290 @@
+{
+  "info": {
+    "name": "Decentralized AAA System",
+    "description": "Full collection for the Decentralized AAA System (Industry 5.0).\n\nWorkflow order:\n  1. Identity — register and approve operator + machine DIDs\n  2. Permit — issue and verify VC permits\n  3. Action — perform actions (authorized + denied log)\n  4. Audit / Batch — create events, batch, verify chain\n  5. Admin — inspect and resolve tampered local-chain blocks",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",      "value": "http://localhost:5000", "type": "string" },
+    { "key": "adminDid",     "value": "",                      "type": "string" },
+    { "key": "operatorDid",  "value": "",                      "type": "string" },
+    { "key": "machineDid",   "value": "",                      "type": "string" },
+    { "key": "credential",   "value": "",                      "type": "string" },
+    { "key": "batchId",      "value": "",                      "type": "string" },
+    { "key": "incidentId",   "value": "",                      "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1 · Identity",
+      "item": [
+        {
+          "name": "Register operator DID",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const j = pm.response.json();",
+            "if (j.did) pm.collectionVariables.set('operatorDid', j.did);"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/identity/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alias\": \"operator-marco\",\n  \"type\": \"operator\"\n}"
+            },
+            "description": "Creates a new did:ethr:sepolia DID for an operator. Status starts as PENDING.\nSave the returned DID to the operatorDid collection variable."
+          }
+        },
+        {
+          "name": "Register machine DID",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const j = pm.response.json();",
+            "if (j.did) pm.collectionVariables.set('machineDid', j.did);"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/identity/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alias\": \"welding-robot-09\",\n  \"type\": \"machine\",\n  \"allowedActions\": [\"WELD\", \"CUT\", \"MOVE_UP\", \"MOVE_DOWN\"]\n}"
+            },
+            "description": "Creates a DID for a machine. allowedActions defines what this machine can do.\nSave the returned DID to the machineDid collection variable."
+          }
+        },
+        {
+          "name": "Register admin DID",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const j = pm.response.json();",
+            "if (j.did) pm.collectionVariables.set('adminDid', j.did);"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/identity/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alias\": \"factory-admin\",\n  \"type\": \"operator\"\n}"
+            },
+            "description": "Creates a DID for the factory admin who will sign permits (VCs)."
+          }
+        },
+        {
+          "name": "Approve operator",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/identity/approve",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"did\": \"{{operatorDid}}\"\n}"
+            },
+            "description": "Moves operator from PENDING to ACTIVE. Only ACTIVE identities can perform actions."
+          }
+        },
+        {
+          "name": "Approve machine",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/identity/approve",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"did\": \"{{machineDid}}\"\n}"
+            },
+            "description": "Moves machine from PENDING to ACTIVE."
+          }
+        },
+        {
+          "name": "List all identities",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/identity/all",
+            "description": "Returns all identities: operators[], machines[], pending[]."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 · Permit (VC)",
+      "item": [
+        {
+          "name": "Issue permit VC",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const j = pm.response.json();",
+            "if (j.credential) pm.collectionVariables.set('credential', JSON.stringify(j.credential));"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/permit/issue",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"issuerDid\": \"{{adminDid}}\",\n  \"holderDid\": \"{{operatorDid}}\",\n  \"machineDid\": \"{{machineDid}}\",\n  \"actions\": [\"WELD\", \"CUT\"]\n}"
+            },
+            "description": "Admin issues a JWT Verifiable Credential granting the operator permission to perform specific actions on a specific machine.\n\nThe returned credential object is stored in the collection variable and sent with every POST /action/perform."
+          }
+        },
+        {
+          "name": "Verify permit VC",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/permit/verify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential\": {{credential}}\n}"
+            },
+            "description": "Verifies the Ed25519/JWT signature on a VC. Returns {verified: true/false}."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Action",
+      "item": [
+        {
+          "name": "Perform authorized action",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/action/perform",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential\": {{credential}},\n  \"operatorDid\": \"{{operatorDid}}\",\n  \"machineDid\": \"{{machineDid}}\",\n  \"action\": \"WELD\"\n}"
+            },
+            "description": "The main AAA endpoint. Runs four checks in order:\n  1. Is operatorDid ACTIVE in the identity store?\n  2. Is machineDid ACTIVE in the identity store?\n  3. Is the VC signature valid?\n  4. Does the VC grant this operator → machine → action?\n\nIf all pass: creates an audit event in SQLite, returns auditEventId.\nIf any fail: logs to denied_events, returns authorized=false + reason.\n\nAudit events are batched by the worker and anchored on Sepolia."
+          }
+        },
+        {
+          "name": "Perform denied action (wrong action)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/action/perform",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential\": {{credential}},\n  \"operatorDid\": \"{{operatorDid}}\",\n  \"machineDid\": \"{{machineDid}}\",\n  \"action\": \"ROTATE\"\n}"
+            },
+            "description": "ROTATE is not in the VC's allowedActions. Returns authorized=false, reason='Action not permitted'. Denial is logged in denied_events table."
+          }
+        },
+        {
+          "name": "Get denied access log",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/action/denied",
+            "description": "Returns all denied access attempts from the SQLite denied_events table.\nUseful for security audits — shows every blocked attempt with reason and timestamp."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 · Audit & Batch",
+      "item": [
+        {
+          "name": "Create audit event (direct)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/audit/event",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operatorDid\": \"did:ethr:sepolia:operator1\",\n  \"deviceDid\": \"did:ethr:sepolia:robot1\",\n  \"action\": \"WELD\"\n}"
+            },
+            "description": "Creates an audit event directly in SQLite (status=PENDING). Use POST /action/perform in production — this endpoint bypasses authorization."
+          }
+        },
+        {
+          "name": "List pending events",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/audit/pending",
+            "description": "Returns all events with status=PENDING (not yet batched)."
+          }
+        },
+        {
+          "name": "Create batch",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const j = pm.response.json();",
+            "if (j.batchId) pm.collectionVariables.set('batchId', j.batchId);",
+            "if (j.incidentId) pm.collectionVariables.set('incidentId', j.incidentId);"
+          ], "type": "text/javascript" }}],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/batch/create",
+            "description": "Picks up to 10 PENDING events, computes Merkle root, signs with Ed25519.\nLive RPC ping routes the block:\n  - Network UP  → MAIN chain (MerkleChain collection)\n  - Network DOWN → LOCAL chain (LocalChain collection, scoped to incident)"
+          }
+        },
+        {
+          "name": "Network status",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/batch/network-status",
+            "description": "Live RPC ping. Returns {networkUp: bool, rpcState: 'UP'|'DOWN'}. No side effects."
+          }
+        },
+        {
+          "name": "Verify main chain",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/batch/verify",
+            "description": "Verifies the entire MerkleChain: Ed25519 signature + previousRoot continuity on every block.\n200 = valid. 409 = tampered (includes error list with batchId + type)."
+          }
+        },
+        {
+          "name": "Verify local chain",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/batch/verify-local?incidentId={{incidentId}}",
+            "description": "Same verification scoped to one incident's LocalChain. Only checks active blocks (PENDING_VERIFICATION, VERIFIED)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 · Admin — Tamper Resolution",
+      "item": [
+        {
+          "name": "List tampered blocks",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/batch/tampered",
+            "description": "Lists all local chain blocks in TAMPERED status, oldest-first.\nStarting point of the admin resolution workflow."
+          }
+        },
+        {
+          "name": "Inspect tampered block",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/batch/local/{{batchId}}/inspect",
+            "description": "Read-only dry run. Compares stored (tampered) block vs SQLite ground truth.\nReturns merkleRootMatch, previousRootMatch, canRecover. No data is changed."
+          }
+        },
+        {
+          "name": "Recover block from SQLite",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/batch/local/{{batchId}}/recover",
+            "description": "Rebuilds tampered block from SQLite events. Re-chains, re-signs, resets to PENDING_VERIFICATION.\nCascade re-chains subsequent blocks automatically (stops at next TAMPERED).\nWorker picks up the recovered block within 10s."
+          }
+        },
+        {
+          "name": "Acknowledge tampered block",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/batch/local/{{batchId}}/acknowledge",
+            "description": "Admin accepts the tampered state. Status → ACKNOWLEDGED.\nBlock kept as forensic record. Never anchored on-chain."
+          }
+        },
+        {
+          "name": "Discard tampered block",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/batch/local/{{batchId}}/discard",
+            "description": "Permanently drops block from anchoring pipeline. Status → DISCARDED.\nBlock kept as forensic record. Use when canRecover=false."
+          }
+        }
+      ]
+    }
+  ]
+}
