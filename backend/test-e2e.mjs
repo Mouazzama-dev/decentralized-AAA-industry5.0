@@ -885,34 +885,28 @@ const scenarioFullAAA = async () => {
     info("   which the batch worker will include in the next Merkle block.");
 
 
-    // ---- (5) Wait for worker to batch + anchor ----
-    await step("(5) Waiting for the audit event to be batched and anchored...");
-    info("Worker cycles every 10s — event -> batch -> MerkleChain -> Sepolia.");
+    // ---- (5) Batch the event then wait for worker to anchor ----
+    await step("(5) Batching the audit event, then waiting for worker to anchor...");
+    info("createBatch groups PENDING SQLite events into a signed Merkle block.");
+    info("Worker then picks up the block and sends it to Sepolia.");
 
-    const auditEventId = authRes.body.auditEventId;
+    const batchRes = await createBatch();
+    info(`Batch chain  = ${batchRes.body.chain}`);
+    info(`Batch id     = ${batchRes.body.batchId}`);
+    assert(batchRes.body.chain === "MAIN", "Batch routed to MAIN chain");
+    assert(!!batchRes.body.batchId, "Batch created with an ID");
+
+    const aaBatchId = batchRes.body.batchId;
     const anchored = await waitFor(
-        "batch anchored (event batched + TX confirmed)",
+        "on-chain anchoring",
         async () => {
-            const res = await fetch(`${AUDIT_API}/pending`);
-            const events = await res.json(); // returns array directly
-            // event no longer pending means it was batched
-            const stillPending = events.some(e => e.id === auditEventId);
-            if (stillPending) return null;
-            // find its batch in MerkleChain
-            const { getDB } = await import("./database/sqlite.js");
-            const db = getDB();
-            const ev = await db.get(
-                `SELECT * FROM events WHERE id = ?`, [auditEventId]
-            );
-            if (!ev || !ev.batchId) return null;
-            const block = await MerkleChain.findOne({ batchId: ev.batchId });
-            return (block && block.txHash) ? { block, ev } : null;
+            const b = await MerkleChain.findOne({ batchId: aaBatchId });
+            return (b && b.txHash) ? b : null;
         }
     );
     if (anchored) {
         assert(true, "Audit event batched and anchored on Sepolia");
-        info(`batchId  = ${anchored.ev.batchId}`);
-        showTxLink("AAA audit batch", anchored.block.txHash);
+        showTxLink("AAA audit batch", anchored.txHash);
     } else {
         assert(false, "Audit event batched and anchored on Sepolia (timed out)");
     }
