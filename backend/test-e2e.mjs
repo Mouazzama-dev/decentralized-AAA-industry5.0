@@ -227,12 +227,12 @@ const ensureNetwork = async (wantUp) => {
  * Polls until predicate() returns truthy, or times out.
  * Used to wait for the worker to anchor / merge.
  */
-const waitFor = async (label, predicate) => {
+const waitFor = async (label, predicate, timeout = WORKER_TIMEOUT) => {
 
     const start = Date.now();
     process.stdout.write(`   waiting for ${label}`);
 
-    while (Date.now() - start < WORKER_TIMEOUT) {
+    while (Date.now() - start < timeout) {
         const result = await predicate();
         if (result) {
             process.stdout.write(" ... done\n");
@@ -339,7 +339,8 @@ const scenarioNormal = async () => {
         async () => {
             const b = await MerkleChain.findOne({ batchId });
             return (b && b.txHash) ? b : null;
-        }
+        },
+        120000
     );
     assert(!!anchored, "Batch anchored on-chain (txHash present)");
     if (anchored) {
@@ -428,7 +429,8 @@ const scenarioIncidentClean = async () => {
         async () => {
             const b = await MerkleChain.findOne({ batchId });
             return (b && b.txHash) ? b : null;
-        }
+        },
+        120000
     );
     assert(!!anchored, "Merged batch anchored on-chain (txHash present)");
     if (anchored) {
@@ -673,7 +675,8 @@ const scenarioAdminRecover = async () => {
         async () => {
             const b = await MerkleChain.findOne({ batchId: batchIdA });
             return (b && b.txHash) ? b : null;
-        }
+        },
+        120000
     );
     assert(!!mergedA, "Recovered batch A merged + anchored on-chain");
     if (mergedA) showTxLink(`Recovered batch A`, mergedA.txHash);
@@ -683,7 +686,8 @@ const scenarioAdminRecover = async () => {
         async () => {
             const b = await MerkleChain.findOne({ batchId: batchIdB });
             return (b && b.txHash) ? b : null;
-        }
+        },
+        120000
     );
     assert(!!mergedB, "Cascade-rechained batch B also merged + anchored on-chain");
     if (mergedB) showTxLink(`Cascade batch B`, mergedB.txHash);
@@ -902,7 +906,8 @@ const scenarioFullAAA = async () => {
         async () => {
             const b = await MerkleChain.findOne({ batchId: aaBatchId });
             return (b && b.txHash) ? b : null;
-        }
+        },
+        120000  // Sepolia TX can take up to ~2 min if older blocks are ahead
     );
     if (anchored) {
         assert(true, "Audit event batched and anchored on Sepolia");
