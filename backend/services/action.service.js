@@ -1,4 +1,5 @@
 import IdentityModel from "../models/Identity.js";
+import { resolveOperatorDid } from "./did-resolver.service.js";
 import { checkAuthorization } from "./authorization.service.js";
 import { createAuditEvent } from "./audit.service.js";
 import { getDB } from "../database/sqlite.js";
@@ -20,17 +21,20 @@ const performAction = async ({
     action
 }) => {
 
-    // Step 1 — operator must be an approved identity
-    const store = await IdentityModel.findOne({ key: "main_store" });
+    // Step 1 — operator DID: local store first, ERC-1056 on-chain fallback
+    // for cross-factory operators (Challenge 1 — Multi-Factory AAA Design).
+    const { active: operatorActive, source: operatorSource } =
+        await resolveOperatorDid(operatorDid);
 
-    const operatorActive = store?.operators.some(o => o.did === operatorDid);
     if (!operatorActive) {
-        const reason = "Operator DID not registered or not yet approved";
+        const reason = "Operator DID not found locally or on-chain";
         await logDenied({ operatorDid, machineDid, action, reason });
         return { authorized: false, reason, auditEventId: null };
     }
 
-    // Step 2 — machine must be an approved identity
+    // Step 2 — machine must be active in the LOCAL store.
+    // Machine DIDs are always local to their factory (no cross-factory fallback).
+    const store = await IdentityModel.findOne({ key: "main_store" });
     const machineActive = store?.machines.some(m => m.did === machineDid);
     if (!machineActive) {
         const reason = "Machine DID not registered or not yet approved";
@@ -63,6 +67,7 @@ const performAction = async ({
         reason: "Access granted",
         auditEventId: event.id,
         operatorDid,
+        operatorSource,   // "local" | "chain"
         machineDid,
         action,
         timestamp: event.timestamp

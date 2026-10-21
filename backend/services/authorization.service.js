@@ -1,4 +1,5 @@
 import { verifyCredential } from "./vc.service.js";
+import { isIssuerTrusted } from "./trust.service.js";
 
 
 const checkAuthorization = async ({
@@ -9,19 +10,25 @@ const checkAuthorization = async ({
 }) => {
 
 
-    // Step 1: Verify VC signature
+    // Check ③a: Verify VC signature
+    const verification = await verifyCredential(credential);
 
-    const verification =
-        await verifyCredential(credential);
+    if (!verification.verified) {
+        return { authorized: false, reason: "Invalid credential" };
+    }
 
+    // Check ③b (C2): Verify issuer is a trusted DID for this gateway.
+    // Trusted issuers: local factory admin DID and/or Platform Root DID.
+    // If no trusted issuers are configured, this check is skipped (backward-compat).
+    const issuerDid = verification.verifiableCredential?.issuer?.id
+        ?? verification.verifiableCredential?.issuer;
 
-    if(!verification.verified){
-
+    const trusted = await isIssuerTrusted(issuerDid);
+    if (!trusted) {
         return {
-            authorized:false,
-            reason:"Invalid credential"
+            authorized: false,
+            reason: `VC issuer not trusted: ${issuerDid}`
         };
-
     }
 
 

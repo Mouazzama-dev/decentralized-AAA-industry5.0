@@ -3,6 +3,10 @@ import {
     getAllIdentities,
     approveIdentity
 } from "../services/identity.service.js";
+import {
+    addTrustedIssuer,
+    getTrustedIssuersDetail
+} from "../services/trust.service.js";
 
 
 
@@ -113,8 +117,32 @@ const approve = async(req,res)=>{
 };
 
 
+const addTrust = async (req, res) => {
+    try {
+        const { did, role } = req.body;
+        if (!did) return res.status(400).json({ error: "did required" });
+        const validRoles = ["localAdmin", "platformRoot", "factoryDid"];
+        const resolvedRole = validRoles.includes(role) ? role : "localAdmin";
+        const issuers = await addTrustedIssuer({ did, role: resolvedRole });
+        res.json({ success: true, trustedIssuers: issuers });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+const getTrust = async (req, res) => {
+    try {
+        const issuers = await getTrustedIssuersDetail();
+        res.json({ trustedIssuers: issuers });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 export {
     register,
     getAll,
-    approve
+    approve,
+    addTrust,
+    getTrust
 };

@@ -8,6 +8,7 @@ import authorizationRoutes from "./routes/authorization.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
 import batchRoutes from "./routes/batch.routes.js";
 import actionRoutes from "./routes/action.routes.js";
+import factoryRegistryRoutes from "./routes/factoryRegistry.routes.js";
 
 
 
@@ -58,6 +59,12 @@ app.use(
 app.use(
     "/api/action",
     actionRoutes
+);
+
+// C3: FactoryRegistry — on-chain factory directory (register + lookup)
+app.use(
+    "/api/factory",
+    factoryRegistryRoutes
 );
 
 export default app;

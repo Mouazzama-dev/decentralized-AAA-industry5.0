@@ -22,6 +22,14 @@ const IdentitySchema = new mongoose.Schema({
     pending: {
         type: Array,
         default: []
+    },
+
+    // C2: trusted VC issuers for this gateway
+    // Each entry: { did, role, addedAt }
+    // Roles: "localAdmin" | "platformRoot" | "factoryDid"
+    trustedIssuers: {
+        type: Array,
+        default: []
     }
 
 }, {
