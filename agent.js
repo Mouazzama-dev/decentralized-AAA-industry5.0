@@ -1,4 +1,5 @@
 import 'reflect-metadata'
+import 'dotenv/config'
 
 import { createAgent } from '@veramo/core'
 import { DIDManager } from '@veramo/did-manager'
@@ -22,6 +23,9 @@ import { DataStore, DataStoreORM } from '@veramo/data-store'
 const DATABASE_FILE = 'database.sqlite'
 const INFURA_PROJECT_ID = ''   // ← leave empty for now
 const KMS_SECRET_KEY = 'de1e045d46d2a99bff4fd8a7c3f11ca4e3c65e57603e15c499a26c5b1ea5929b'
+
+// C4: use env-var RPC so breaking it in .env triggers offline-fallback path in tests
+const SEPOLIA_RPC = process.env.RPC || 'https://ethereum-sepolia-rpc.publicnode.com'
 
 /***************************************
  * DATABASE INITIALIZATION
@@ -63,7 +67,7 @@ export const agent = createAgent({
         'did:ethr:sepolia': new EthrDIDProvider({
           defaultKms: 'local',
           network: 'sepolia',
-          rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
+          rpcUrl: SEPOLIA_RPC,
         }),
       },
     }),
@@ -78,7 +82,7 @@ new DIDResolverPlugin({
       {
         name: 'sepolia',
         chainId: 11155111,
-        rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
+        rpcUrl: SEPOLIA_RPC,
         registry: '0x03d5003bf0e79C5F5223588F347ebA39AfbC3818',
       },
     ],

@@ -21,6 +21,11 @@ import {
 
 let workerRunning = false;
 
+// C4: Only declare a network incident after this many consecutive RPC failures.
+// A single transient failure from the public Sepolia RPC does not trigger an incident.
+const FAILURE_THRESHOLD = 3;
+let consecutiveRpcFailures = 0;
+
 
 const getErrorMessage = (error) => {
 
@@ -113,17 +118,27 @@ const startSyncWorker = () => {
                 const blockNumber =
                     await provider.getBlockNumber();
 
-                // console.log(
-                //     "🌐 RPC available at block:",
-                //     blockNumber
-                // );
+                // RPC is up — reset consecutive failure counter
+                consecutiveRpcFailures = 0;
 
             } catch (rpcError) {
+
+                consecutiveRpcFailures += 1;
 
                 const rpcErrorMessage =
                     getErrorMessage(rpcError);
 
+                if (consecutiveRpcFailures < FAILURE_THRESHOLD) {
+                    // Transient blip — log quietly, don't create an incident yet
+                    console.warn(
+                        `⚠️  RPC blip (${consecutiveRpcFailures}/${FAILURE_THRESHOLD}):`,
+                        rpcErrorMessage
+                    );
+                    await markBatchForRetry(rpcErrorMessage);
+                    return;
+                }
 
+                // Persistent failure — declare a real network incident
                 console.error(
                     "❌ RPC unavailable:",
                     rpcErrorMessage
@@ -220,6 +235,7 @@ const startSyncWorker = () => {
                     "seconds"
                 );
 
+                consecutiveRpcFailures = 0;
 
             }
 
@@ -291,12 +307,9 @@ const startSyncWorker = () => {
 
             if (mergeSummary.anyTampered) {
 
-                console.error(
-                    "⛔ Anchoring halted this cycle until tampered local chain(s) are resolved."
+                console.warn(
+                    "⚠️  Tampered local chain(s) pending admin resolution — main chain anchoring continues."
                 );
-
-                // Do not anchor anything this cycle.
-                return;
 
             }
 

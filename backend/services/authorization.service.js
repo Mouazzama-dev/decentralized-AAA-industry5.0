@@ -1,5 +1,5 @@
-import { verifyCredential } from "./vc.service.js";
-import { isIssuerTrusted } from "./trust.service.js";
+import { verifyCredential, verifyCredentialOffline } from "./vc.service.js";
+import { isIssuerTrusted, getCachedDIDDocument } from "./trust.service.js";
 
 
 const checkAuthorization = async ({
@@ -8,13 +8,24 @@ const checkAuthorization = async ({
     machineDid,
     action
 }) => {
+    let verification;
 
-
-    // Check ③a: Verify VC signature
-    const verification = await verifyCredential(credential);
+    // Check ③a: Verify VC signature.
+    // Veramo's verifyCredential never throws — it catches RPC failures internally
+    // and returns { verified: false }. So: if live verification fails for any reason,
+    // attempt offline verification using the MongoDB-cached DID document (C4).
+    // If the credential signature is genuinely invalid, verifyCredentialOffline also
+    // throws (did-jwt's verifyJWT fails cryptographically), and we deny normally.
+    verification = await verifyCredential(credential);
 
     if (!verification.verified) {
-        return { authorized: false, reason: "Invalid credential" };
+        try {
+            verification = await verifyCredentialOffline(credential, getCachedDIDDocument);
+            console.log("[C4] Offline VC verification succeeded (live path returned verified:false)");
+        } catch (offlineErr) {
+            // Credential is actually invalid, or issuer not cached — deny.
+            return { authorized: false, reason: "Invalid credential" };
+        }
     }
 
     // Check ③b (C2): Verify issuer is a trusted DID for this gateway.
@@ -76,11 +87,9 @@ const checkAuthorization = async ({
 
 
     return {
-
-        authorized:true,
-
-        reason:"Access granted"
-
+        authorized: true,
+        reason: "Access granted",
+        ...(verification.offlineMode ? { offlineMode: true } : {})
     };
 
 };

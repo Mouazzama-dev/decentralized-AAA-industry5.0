@@ -30,6 +30,13 @@ const IdentitySchema = new mongoose.Schema({
     trustedIssuers: {
         type: Array,
         default: []
+    },
+
+    // C4: cached DID documents for offline VC verification when RPC is unreachable
+    // Each entry: { did, document (Mixed), cachedAt }
+    cachedDIDDocuments: {
+        type: Array,
+        default: []
     }
 
 }, {

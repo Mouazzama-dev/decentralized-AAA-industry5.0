@@ -70,7 +70,8 @@ const performAction = async ({
         operatorSource,   // "local" | "chain"
         machineDid,
         action,
-        timestamp: event.timestamp
+        timestamp: event.timestamp,
+        ...(authResult.offlineMode ? { offlineMode: true } : {})
     };
 };
 

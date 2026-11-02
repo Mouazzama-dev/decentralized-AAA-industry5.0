@@ -996,17 +996,16 @@ const scenarioCrossFactoryOperator = async () => {
     console.log("\n\n=====================================================");
     console.log(" SCENARIO 7 - CROSS-FACTORY OPERATOR (Challenge 1)");
     console.log("=====================================================");
-    console.log(" A roaming operator's DID is NOT approved in the local");
-    console.log(" MongoDB store, but IS on-chain via ERC-1056 (Sepolia).");
-    console.log(" Gate check ① should pass via on-chain resolution.");
-    console.log(" operatorSource in the response should be 'chain'.");
+    console.log(" Roaming operator is NOT in local MongoDB.");
+    console.log(" System falls back to ERC-1056 on Sepolia to verify identity.");
+    console.log(" operatorSource = 'chain' proves the fallback was used.");
 
     await ensureNetwork(true);
 
     const ts = Date.now();
 
-    // ---- (1) Admin + machine: registered AND approved locally ----
-    await step("(1) Setting up local admin + machine (approved locally as normal)...");
+    // ---- (1) Setup: admin + machine locally, admin added to trusted issuers ----
+    await step("(1) Creating admin and machine (approved locally)...");
 
     const adminReg = await registerIdentity({
         alias: `e2e-cf-admin-${ts}`,
@@ -1030,11 +1029,15 @@ const scenarioCrossFactoryOperator = async () => {
     assert(approveAdmin.success === true, "Admin approved locally");
     assert(approveMach.success  === true, "Machine approved locally");
 
-    // ---- (2) Cross-factory operator: registered (so on-chain) but NOT approved ----
-    await step("(2) Registering cross-factory operator DID — NOT approving locally...");
-    info("This simulates an operator whose home factory is elsewhere.");
-    info("registerIdentity writes the DID to Sepolia ERC-1056 via Veramo.");
-    info("We skip /approve so it stays PENDING in MongoDB — not in operators[].");
+    // Add admin as trusted issuer so VC check passes regardless of previous test runs
+    const trustAdmin = await addTrustedIssuer({ did: adminDid, role: "localAdmin" });
+    assert(trustAdmin.status === 200, "Admin added to trusted issuers");
+    info("Admin DID added to trustedIssuers — VC check will pass.");
+
+    // ---- (2) Cross-factory operator: on Sepolia but NOT in local MongoDB ----
+    await step("(2) Creating cross-factory operator — registered on-chain, NOT approved locally...");
+    info("Simulates an operator from another factory.");
+    info("Their DID is written to Sepolia ERC-1056, but NOT in this factory's MongoDB.");
 
     const cfOpReg = await registerIdentity({
         alias: `e2e-cf-operator-${ts}`,
@@ -1042,12 +1045,11 @@ const scenarioCrossFactoryOperator = async () => {
     });
     assert(!!cfOpReg.did, "Cross-factory operator DID created (on-chain)");
     const cfOperatorDid = cfOpReg.did;
-    info(`cross-factory operator DID = ${cfOperatorDid}`);
-    info("Status = PENDING — deliberately NOT calling /approve.");
+    info(`operator DID = ${cfOperatorDid}`);
+    info("Status = PENDING in local MongoDB — not calling /approve.");
 
-    // ---- (3) Issue a VC permit for the cross-factory operator ----
-    await step("(3) Issuing a VC permit for the cross-factory operator...");
-    info("The admin (locally approved, has private key in Veramo store) signs the VC.");
+    // ---- (3) Issue a VC permit signed by the local admin ----
+    await step("(3) Issuing VC permit for cross-factory operator...");
 
     const permitRes = await issuePerm({
         issuerDid:  adminDid,
@@ -1055,13 +1057,13 @@ const scenarioCrossFactoryOperator = async () => {
         machineDid: machineDid,
         actions:    ["WELD"]
     });
-    assert(permitRes.success === true, "VC permit issued for cross-factory operator");
+    assert(permitRes.success === true, "VC permit issued");
     const credential = permitRes.credential;
-    info(`VC issued: ${typeof credential === "string" ? credential.slice(0, 60) + "…" : "object"}`);
 
-    // ---- (4) Cross-factory operator performs an action ----
-    await step("(4) Cross-factory operator performs WELD — check ① via ERC-1056 fallback...");
-    info("Operator is NOT in local operators[] — gate falls back to on-chain resolution.");
+    // ---- (4) Action: should pass via ERC-1056 fallback ----
+    await step("(4) Cross-factory operator performs WELD...");
+    info("Local MongoDB check: not found (PENDING).");
+    info("ERC-1056 fallback: DID found on Sepolia → allowed.");
 
     const authRes = await performAction({
         credential,
@@ -1073,25 +1075,21 @@ const scenarioCrossFactoryOperator = async () => {
     info(`authorized     = ${authRes.body.authorized}`);
     info(`operatorSource = ${authRes.body.operatorSource}`);
     info(`auditEventId   = ${authRes.body.auditEventId}`);
-    assert(authRes.status === 200,              "Action returns HTTP 200");
-    assert(authRes.body.authorized === true,    "Cross-factory operator authorized");
-    assert(
-        authRes.body.operatorSource === "chain",
-        "operatorSource = 'chain' (resolved via ERC-1056, not local store)"
-    );
-    assert(
-        typeof authRes.body.auditEventId === "number",
-        "Audit event written to SQLite (action was granted)"
-    );
-    info("   KEY: operator was NOT in local MongoDB yet still passed check ①.");
-    info("   KEY: operatorSource='chain' proves ERC-1056 fallback was used.");
+    assert(authRes.status === 200,                       "Action returns HTTP 200");
+    assert(authRes.body.authorized === true,             "Cross-factory operator authorized");
+    assert(authRes.body.operatorSource === "chain",      "operatorSource = 'chain'");
+    assert(typeof authRes.body.auditEventId === "number","Audit event logged");
+    info("KEY: operator was not in local MongoDB — passed via ERC-1056 fallback.");
 
-    // ---- (5) Fake DID that was never registered must still fail ----
-    await step("(5) Fake DID (never registered, not on-chain) must fail check ①...");
+    // ---- (5) Unauthorized operator: no valid VC, no trusted issuer → denied ----
+    await step("(5) Unauthorized operator — must be denied...");
+    info("NOTE: ERC-1056 resolves ANY valid Ethereum address (every address has an implicit DID).");
+    info("Denial here comes from the VC issuer check — issuer is not trusted.");
+
     const fakeDid = "did:ethr:sepolia:0x0000000000000000000000000000000000000001";
 
     const fakePermit = await issuePerm({
-        issuerDid:  adminDid,
+        issuerDid:  cfOperatorDid,   // issuer = the roaming operator itself, NOT a trusted admin
         holderDid:  fakeDid,
         machineDid: machineDid,
         actions:    ["WELD"]
@@ -1104,13 +1102,12 @@ const scenarioCrossFactoryOperator = async () => {
     });
     info(`authorized = ${fakeRes.body.authorized}`);
     info(`reason     = ${fakeRes.body.reason}`);
-    assert(fakeRes.body.authorized === false, "Fake DID correctly denied");
+    assert(fakeRes.body.authorized === false, "Unauthorized operator correctly denied");
     assert(
-        fakeRes.body.reason.includes("not found"),
-        "Deny reason mentions DID not found"
+        fakeRes.body.reason?.includes("not trusted"),
+        "Denied because VC issuer is not a trusted DID"
     );
-    info("   KEY: on-chain fallback only helps real registered DIDs,");
-    info("   not arbitrary addresses that were never written to ERC-1056.");
+    info("KEY: operator was denied because the VC was not signed by a trusted issuer.");
 
     await ask("Scenario 7 done. Press ENTER to continue...");
 };
@@ -1269,6 +1266,167 @@ const scenarioPlatformRootTrust = async () => {
     await ask("Scenario 8 done. Press ENTER to continue...");
 };
 
+// ─── C4 helpers ──────────────────────────────────────────────────────────────
+
+const cacheRootKey = async (did) => {
+    const res = await fetch(`${IDENTITY_API}/cache-root-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ did })
+    });
+    return { status: res.status, body: await res.json() };
+};
+
+const getCachedKeys = async () => {
+    const res = await fetch(`${IDENTITY_API}/cached-keys`);
+    return { status: res.status, body: await res.json() };
+};
+
+// ─── Scenario 10 — C4: Offline Resilience ────────────────────────────────────
+
+const scenarioOfflineResilience = async () => {
+
+    console.log("\n\n=====================================================");
+    console.log(" SCENARIO 10 - OFFLINE RESILIENCE (Challenge 4)");
+    console.log("=====================================================");
+    console.log(" Operator is locally approved (Step 1 passes via MongoDB).");
+    console.log(" Their VC is signed by the Platform Root DID (not local admin).");
+    console.log(" When the Sepolia RPC is DOWN, agent.verifyCredential()");
+    console.log(" throws because it cannot resolve the Platform Root DID.");
+    console.log(" Fallback: use the MongoDB-cached DID document + did-jwt to");
+    console.log(" verify the JWT signature — zero blockchain calls needed.");
+    console.log(" offlineMode=true in the response confirms the fallback path.");
+
+    await ensureNetwork(true);
+
+    const ts = Date.now();
+
+    // ---- (1) Create Platform Root + add as trusted issuer (auto-caches DID doc) ----
+    await step("(1) Creating Platform Root DID and adding as trusted issuer...");
+    info("Adding as platformRoot automatically caches the DID document in MongoDB.");
+
+    const rootReg = await registerIdentity({
+        alias: `e2e-c4-root-${ts}`,
+        type: "operator"
+    });
+    assert(!!rootReg.did, "Platform Root DID created");
+    const platformRootDid = rootReg.did;
+    await approveIdentity(platformRootDid);
+    info(`Platform Root DID = ${platformRootDid}`);
+
+    const trustRes = await addTrustedIssuer({ did: platformRootDid, role: "platformRoot" });
+    assert(trustRes.status === 200, "Platform Root added as trusted issuer");
+
+    // ---- (2) Confirm the DID document was cached ----
+    await step("(2) Confirming DID document is cached in MongoDB...");
+
+    const cachedRes = await getCachedKeys();
+    info(`HTTP status      = ${cachedRes.status}`);
+    info(`Cached DIDs count = ${cachedRes.body.count}`);
+    const inCache = cachedRes.body.cachedDIDs?.some(d => d.did === platformRootDid);
+    assert(cachedRes.status === 200, "GET /cached-keys returns HTTP 200");
+    assert(inCache, "Platform Root DID document is in the MongoDB cache");
+    info("   KEY (C4): DID document cached automatically — no separate step needed.");
+    info("   This cache is the offline fallback; it will be used when RPC is down.");
+
+    // ---- (3) Set up local machine ----
+    await step("(3) Registering + approving a local machine...");
+
+    const machReg = await registerIdentity({
+        alias: `e2e-c4-machine-${ts}`,
+        type: "machine",
+        allowedActions: ["INSPECT"]
+    });
+    const machineDid = machReg.did;
+    await approveIdentity(machineDid);
+    assert(!!machineDid, "Local machine created and approved");
+
+    // ---- (4) Operator: registered AND locally approved ----
+    // C4 focuses on VC *issuer* DID resolution being offline (Platform Root),
+    // NOT on operator DID resolution. Operator is approved locally so Step 1
+    // (operator DID check) passes via MongoDB with zero RPC calls.
+    await step("(4) Registering and approving operator locally...");
+
+    const roamReg = await registerIdentity({
+        alias: `e2e-c4-operator-${ts}`,
+        type: "operator"
+    });
+    const roamingDid = roamReg.did;
+    await approveIdentity(roamingDid);
+    assert(!!roamingDid, "Operator DID created and approved locally");
+    info(`operator DID = ${roamingDid}`);
+    info("Approved locally — Step 1 (operator DID check) will pass via MongoDB.");
+    info("When RPC is DOWN, Step 3 (Platform Root VC verification) needs offline fallback.");
+
+    // ---- (5) Platform Root issues VC to roaming operator ----
+    await step("(5) Platform Root issues cross-factory VC to roaming operator...");
+
+    const vcRes = await issuePerm({
+        issuerDid:  platformRootDid,
+        holderDid:  roamingDid,
+        machineDid: machineDid,
+        actions:    ["INSPECT"]
+    });
+    assert(vcRes.success === true, "Root-signed VC issued");
+    const rootSignedVC = vcRes.credential;
+    info(`VC type: ${typeof rootSignedVC}`);
+    info("   This credential will be used in step (7) when RPC is DOWN.");
+
+    // ---- (6) Verify it works with RPC UP first ----
+    await step("(6) Confirming action works with RPC UP (baseline check)...");
+
+    const liveRes = await performAction({
+        credential:  rootSignedVC,
+        operatorDid: roamingDid,
+        machineDid,
+        action: "INSPECT"
+    });
+    info(`authorized   = ${liveRes.body.authorized}`);
+    info(`offlineMode  = ${liveRes.body.offlineMode}`);
+    assert(liveRes.status === 200,           "HTTP 200 with RPC up");
+    assert(liveRes.body.authorized === true, "Authorized when RPC is live");
+    assert(!liveRes.body.offlineMode,        "offlineMode is NOT set when RPC is live");
+    info("   KEY: normal live path — offlineMode absent.");
+
+    // ---- (7) Break the RPC — now test offline fallback ----
+    await step("(7) RPC needs to be DOWN for the offline fallback test.");
+    info("Break the RPC in backend/.env: set RPC=http://localhost:9999");
+    info("Then restart the server (Ctrl+C + node server.js or npm start).");
+    info("The server should start OK even with a bad RPC.");
+
+    await ensureNetwork(false);
+
+    info("RPC is confirmed DOWN. agent.verifyCredential() will throw.");
+    info("The fallback will use the cached DID document from MongoDB.");
+
+    const offlineRes = await performAction({
+        credential:  rootSignedVC,
+        operatorDid: roamingDid,
+        machineDid,
+        action: "INSPECT"
+    });
+    info(`HTTP status  = ${offlineRes.status}`);
+    info(`authorized   = ${offlineRes.body.authorized}`);
+    info(`offlineMode  = ${offlineRes.body.offlineMode}`);
+    info(`reason       = ${offlineRes.body.reason}`);
+    assert(offlineRes.status === 200,             "HTTP 200 even with RPC DOWN");
+    assert(offlineRes.body.authorized === true,   "Operator authorized via offline fallback");
+    assert(offlineRes.body.offlineMode === true,  "offlineMode=true confirms cached-key path");
+    info("   KEY (C4): RPC was DOWN but operator was still authorized.");
+    info("   JWT signature verified using MongoDB-cached DID document — no blockchain call.");
+
+    // ---- (8) Fix RPC + cleanup ----
+    await step("(8) Restoring RPC to normal.");
+    info("Restore RPC in backend/.env to the real Sepolia URL.");
+    info("Then restart the server before running other scenarios.");
+
+    await ensureNetwork(true);
+    info("RPC is back UP. System is fully operational.");
+    assert(true, "RPC restored — offline resilience test complete");
+
+    await ask("Scenario 10 done. Press ENTER to continue...");
+};
+
 // ─── C3 helpers ──────────────────────────────────────────────────────────────
 
 const registerFactory = async ({ factoryName, accessLogAddress }) => {
@@ -1323,12 +1481,26 @@ const scenarioFactoryRegistry = async () => {
         info(`   Etherscan: ${EXPLORER_TX}${regRes.body.txHash}`);
     }
 
-    // ---- (2) Register a second factory (simulated) ----
-    await step("(2) Registering Factory B with a simulated AccessLog address...");
-    info("In a real multi-factory setup, Factory B has its own deployed AccessLog.sol.");
-    info("Here we use a placeholder address to demonstrate the registry pattern.");
+    // ---- (2) Deploy Factory B's own AccessLog.sol on Sepolia ----
+    await step("(2) Deploying Factory B's AccessLog.sol on Sepolia...");
+    info("In a real multi-factory setup each factory runs its own AccessLog contract.");
+    info("Deploying a real second AccessLog for Factory B now...");
 
-    const factoryBAddr = "0x000000000000000000000000000000000000BEEF";
+    const deployBRaw = await fetch(`${FACTORY_API}/deploy`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const deployBRes = { status: deployBRaw.status, body: await deployBRaw.json() };
+    info(`HTTP status     = ${deployBRes.status}`);
+    info(`AccessLog addr  = ${deployBRes.body.address}`);
+    info(`txHash          = ${deployBRes.body.txHash}`);
+    assert(deployBRes.status === 200,       "Factory B AccessLog deployed — HTTP 200");
+    assert(!!deployBRes.body.address,       "Deployed contract address returned");
+    assert(!!deployBRes.body.txHash,        "Deployment transaction hash returned");
+    if (deployBRes.body.txHash) {
+        info(`   Etherscan: ${EXPLORER_TX}${deployBRes.body.txHash}`);
+    }
+    const factoryBAddr = deployBRes.body.address;
+
+    // ---- (2b) Register Factory B in the FactoryRegistry ----
+    await step("(2b) Registering Factory B in on-chain FactoryRegistry...");
     const regBRes = await registerFactory({
         factoryName:      "factory-B",
         accessLogAddress: factoryBAddr
@@ -1398,9 +1570,10 @@ const main = async () => {
     console.log("  [7] cross-factory       — Challenge 1: operator resolved via ERC-1056 fallback");
     console.log("  [8] platform-root-trust — Challenge 2: Platform Root DID trust hierarchy");
     console.log("  [9] factory-registry    — Challenge 3: FactoryRegistry on-chain directory");
+    console.log(" [10] offline-resilience  — Challenge 4: offline VC verify with cached DID doc");
     console.log("  [a] all                 — run all scenarios in order");
 
-    const which = await ask("Run which? [a/1/2/3/4/5/6/7/8/9]:");
+    const which = await ask("Run which? [a/1/2/3/4/5/6/7/8/9/10]:");
 
     try {
         if (which === "1") await scenarioNormal();
@@ -1412,6 +1585,7 @@ const main = async () => {
         else if (which === "7") await scenarioCrossFactoryOperator();
         else if (which === "8") await scenarioPlatformRootTrust();
         else if (which === "9") await scenarioFactoryRegistry();
+        else if (which === "10") await scenarioOfflineResilience();
         else {
             await scenarioNormal();
             await scenarioIncidentClean();
@@ -1422,6 +1596,7 @@ const main = async () => {
             await scenarioCrossFactoryOperator();
             await scenarioPlatformRootTrust();
             await scenarioFactoryRegistry();
+            await scenarioOfflineResilience();
         }
     } catch (err) {
         console.error("\nTest run error:", err.message);

@@ -5,7 +5,9 @@ import {
 } from "../services/identity.service.js";
 import {
     addTrustedIssuer,
-    getTrustedIssuersDetail
+    getTrustedIssuersDetail,
+    cacheDidDocument,
+    listCachedDIDDocuments
 } from "../services/trust.service.js";
 
 
@@ -139,10 +141,35 @@ const getTrust = async (req, res) => {
     }
 };
 
+// C4: manually (re-)cache a DID document for offline VC verification.
+// Useful when a Platform Root DID is rotated or when cache needs refreshing.
+const cacheRootKey = async (req, res) => {
+    try {
+        const { did } = req.body;
+        if (!did) return res.status(400).json({ error: "did required" });
+        const document = await cacheDidDocument(did);
+        const cached = await listCachedDIDDocuments();
+        res.json({ success: true, did, cachedAt: new Date(), totalCached: cached.length });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+const getCachedKeys = async (req, res) => {
+    try {
+        const cached = await listCachedDIDDocuments();
+        res.json({ count: cached.length, cachedDIDs: cached });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 export {
     register,
     getAll,
     approve,
     addTrust,
-    getTrust
+    getTrust,
+    cacheRootKey,
+    getCachedKeys
 };

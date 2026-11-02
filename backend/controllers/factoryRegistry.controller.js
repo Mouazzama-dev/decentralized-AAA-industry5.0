@@ -1,4 +1,4 @@
-import { registerFactory, getAccessLog, getAllFactories } from "../services/factoryRegistry.service.js";
+import { registerFactory, getAccessLog, getAllFactories, deployAccessLog } from "../services/factoryRegistry.service.js";
 
 const register = async (req, res) => {
     try {
@@ -36,4 +36,13 @@ const listAll = async (req, res) => {
     }
 };
 
-export { register, lookup, listAll };
+const deploy = async (req, res) => {
+    try {
+        const result = await deployAccessLog();
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export { register, lookup, listAll, deploy };

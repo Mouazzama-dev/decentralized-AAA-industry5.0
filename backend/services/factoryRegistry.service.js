@@ -1,5 +1,13 @@
 import { ethers } from "ethers";
-import { getRegistryContract } from "../blockchain/factoryRegistry.contract.js";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+import { getRegistryContract, wallet } from "../blockchain/factoryRegistry.contract.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const ACCESS_LOG_ARTIFACT = JSON.parse(
+    readFileSync(join(__dirname, "../../access-log/out/AccessLog.sol/AccessLog.json"), "utf8")
+);
 
 // Convert a human-readable factory name to bytes32 (keccak256 hash)
 const toFactoryId = (name) => ethers.id(name);   // ethers.id() = keccak256(utf8)
@@ -47,4 +55,21 @@ const getAllFactories = async () => {
     return results;
 };
 
-export { registerFactory, getAccessLog, getAllFactories, toFactoryId };
+// Deploy a fresh AccessLog.sol on Sepolia and return its address.
+// Used in multi-factory scenarios where Factory B needs its own real contract.
+const deployAccessLog = async () => {
+    const factory = new ethers.ContractFactory(
+        ACCESS_LOG_ARTIFACT.abi,
+        ACCESS_LOG_ARTIFACT.bytecode.object,
+        wallet
+    );
+    const contract = await factory.deploy();
+    const receipt = await contract.deploymentTransaction().wait();
+    return {
+        address: await contract.getAddress(),
+        txHash: receipt.hash,
+        blockNumber: receipt.blockNumber
+    };
+};
+
+export { registerFactory, getAccessLog, getAllFactories, toFactoryId, deployAccessLog };
